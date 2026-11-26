@@ -1,0 +1,3580 @@
+import './styles.css';
+import {
+  ARCHIVE_ITEMS,
+  COPY,
+  DISCIPLINES,
+  ENGAGEMENT_TIERS,
+  ERAS,
+  FAQ_ITEMS,
+  GLYPHS,
+  GLYPHS_BOLD,
+  META,
+  NAV_ITEMS,
+  PROJECTS,
+  STUDIO_PLAN,
+  STUDIO_ZONES,
+  TOKENS,
+  type ArchiveEntry,
+  type CareerEra,
+  type Discipline,
+  type ProjectItem,
+} from './data';
+
+const TRACK_COLORS = [TOKENS.blue, TOKENS.pink, TOKENS.lavender, TOKENS.green];
+const TRAIL_COLORS = [
+  TOKENS.blue,
+  TOKENS.pink,
+  TOKENS.green,
+  TOKENS.lavender,
+  TOKENS.coral,
+  TOKENS.mint,
+];
+const BADGE_PALETTE = [
+  { id: '0', name: 'ink', hex: TOKENS.ink },
+  { id: '1', name: 'paper', hex: TOKENS.paper },
+  { id: '2', name: 'sodium', hex: TOKENS.sodium },
+  { id: '3', name: 'blue', hex: TOKENS.blue },
+  { id: '4', name: 'pink', hex: TOKENS.pink },
+  { id: '5', name: 'green', hex: TOKENS.green },
+  { id: '6', name: 'lavender', hex: TOKENS.lavender },
+  { id: '7', name: 'coral', hex: TOKENS.coral },
+  { id: '8', name: 'mint', hex: TOKENS.mint },
+];
+
+// Helpers
+function esc(str: unknown): string {
+  return String(str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+function normText(str: string): string {
+  return String(str)
+    .normalize('NFD')
+    .replace(/\p{Diacritic}/gu, '')
+    .toLowerCase();
+}
+
+function fmtTime(hhmm: string): string {
+  return String(hhmm).replace(':', '.');
+}
+
+function timeToMin(hhmm: string): number {
+  const parts = hhmm.split(':');
+  return parseInt(parts[0], 10) * 60 + parseInt(parts[1], 10);
+}
+
+function storageGet<T>(key: string, fallback: T): T {
+  try {
+    const raw = window.localStorage.getItem(key);
+    if (raw === null) return fallback;
+    return JSON.parse(raw) as T;
+  } catch {
+    return fallback;
+  }
+}
+
+function storageSet(key: string, val: unknown): void {
+  try {
+    window.localStorage.setItem(key, JSON.stringify(val));
+  } catch {
+    // Ignore storage errors in private mode
+  }
+}
+
+function hashStr(s: string): number {
+  let h = 2166136261;
+  for (let i = 0; i < s.length; i++) {
+    h ^= s.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  return h >>> 0;
+}
+
+function makeRng(seed: number): () => number {
+  let a = seed >>> 0;
+  return function () {
+    a |= 0;
+    a = (a + 0x6d2b79f5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+function cubicBezier(x1: number, y1: number, x2: number, y2: number) {
+  return function (t: number): number {
+    if (t <= 0) return 0;
+    if (t >= 1) return 1;
+    let lo = 0;
+    let hi = 1;
+    let u = t;
+    for (let i = 0; i < 12; i++) {
+      u = (lo + hi) * 0.5;
+      const mu = 1 - u;
+      const x = 3 * mu * mu * u * x1 + 3 * mu * u * u * x2 + u * u * u;
+      if (x < t) lo = u;
+      else hi = u;
+    }
+    const mu = 1 - u;
+    return 3 * mu * mu * u * y1 + 3 * mu * u * u * y2 + u * u * u;
+  };
+}
+
+const easeMorph = cubicBezier(0.7, 0, 0.3, 1);
+const easeAssemble = cubicBezier(0.2, 0, 0, 1);
+
+const trackById = (id: string): Discipline =>
+  DISCIPLINES.find((t) => t.id === id) || DISCIPLINES[0];
+const zoneById = (id: string) =>
+  STUDIO_ZONES.find((r) => r.id === id) || STUDIO_ZONES[0];
+const eraById = (id: string): CareerEra =>
+  ERAS.find((d) => d.id === id) || ERAS[0];
+const projectById = (id: string): ProjectItem | undefined =>
+  PROJECTS.find((s) => s.id === id);
+const archiveById = (id: string): ArchiveEntry | undefined =>
+  ARCHIVE_ITEMS.find((s) => s.id === id);
+const archiveByTrack = (id: string): ArchiveEntry[] =>
+  ARCHIVE_ITEMS.filter((s) => s.track === id);
+const archiveByEra = (id: string): ArchiveEntry[] =>
+  ARCHIVE_ITEMS.filter((s) => s.era === id);
+const archiveByProject = (id: string): ArchiveEntry[] =>
+  ARCHIVE_ITEMS.filter((s) => s.projects.includes(id));
+
+function defaultBadgeGrid(): string {
+  const g = new Array(256).fill('1');
+  const heart = [
+    '011000110',
+    '111101111',
+    '111111111',
+    '111111111',
+    '111111111',
+    '011111110',
+    '001111100',
+    '000111000',
+    '000010000',
+  ];
+  for (let r = 0; r < heart.length; r++) {
+    for (let c = 0; c < 9; c++) {
+      if (heart[r][c] === '1') {
+        g[(r + 4) * 16 + (c + 3)] = '7';
+      }
+    }
+  }
+  return g.join('');
+}
+
+// Application state
+const prefersReduce =
+  typeof window.matchMedia === 'function' &&
+  window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+const savedMotion = storageGet<boolean | null>('kroon.motion', null);
+const initialMotion = savedMotion === null ? !prefersReduce : Boolean(savedMotion);
+
+interface AppState {
+  motionOn: boolean;
+  savedIds: string[];
+  timelineFilter: {
+    era: string;
+    tracks: string[];
+    savedOnly: boolean;
+    view: 'timeline' | 'table';
+  };
+  projectsFilter: {
+    tracks: string[];
+    sort: 'featured' | 'az' | 'year';
+  };
+  archiveFilter: {
+    query: string;
+    kinds: string[];
+    tracks: string[];
+    sortCol: 'id' | 'era' | 'title' | 'track' | 'kind';
+    sortDir: 'asc' | 'desc';
+    openId: string | null;
+  };
+  selectedZone: string;
+  bookingQty: Record<'sprint' | 'build' | 'advisory', number>;
+  bookingQuarter: string;
+  bookingError: string;
+  contactName: string;
+  contactEmail: string;
+  contactBrief: string;
+  badge: {
+    grid: string;
+    name: string;
+  };
+  scrollAfterRoute: string | null;
+  routeCleanup: Array<() => void>;
+}
+
+const state: AppState = {
+  motionOn: initialMotion,
+  savedIds: storageGet<string[]>('kroon.saved', []),
+  timelineFilter: Object.assign(
+    { era: 'e1', tracks: [] as string[], savedOnly: false, view: 'timeline' as const },
+    storageGet<Partial<AppState['timelineFilter']>>('kroon.timeline', {})
+  ),
+  projectsFilter: { tracks: [], sort: 'featured' },
+  archiveFilter: {
+    query: '',
+    kinds: [],
+    tracks: [],
+    sortCol: 'id',
+    sortDir: 'asc',
+    openId: null,
+  },
+  selectedZone: 'systems-desk',
+  bookingQty: { sprint: 0, build: 0, advisory: 0 },
+  bookingQuarter: '',
+  bookingError: '',
+  contactName: '',
+  contactEmail: '',
+  contactBrief: '',
+  badge: Object.assign(
+    { grid: defaultBadgeGrid(), name: 'Visitor' },
+    storageGet<Partial<AppState['badge']>>('kroon.badge', {})
+  ),
+  scrollAfterRoute: null,
+  routeCleanup: [],
+};
+
+if (!Array.isArray(state.savedIds)) state.savedIds = [];
+if (!Array.isArray(state.timelineFilter.tracks)) state.timelineFilter.tracks = [];
+if (!['e1', 'e2', 'e3'].includes(state.timelineFilter.era)) state.timelineFilter.era = 'e1';
+if (!['timeline', 'table'].includes(state.timelineFilter.view))
+  state.timelineFilter.view = 'timeline';
+if (typeof state.badge.grid !== 'string' || state.badge.grid.length !== 256) {
+  state.badge.grid = defaultBadgeGrid();
+}
+if (typeof state.badge.name !== 'string') state.badge.name = 'Visitor';
+
+function toggleSaved(entryId: string): void {
+  const idx = state.savedIds.indexOf(entryId);
+  if (idx === -1) state.savedIds.push(entryId);
+  else state.savedIds.splice(idx, 1);
+  storageSet('kroon.saved', state.savedIds);
+}
+
+// Shared rAF scheduler
+const motion = (() => {
+  const subs = new Set<(now: number) => void>();
+  let rafId = 0;
+
+  function tick(now: number) {
+    rafId = 0;
+    if (document.visibilityState === 'hidden' || subs.size === 0) return;
+    for (const fn of Array.from(subs)) {
+      try {
+        fn(now);
+      } catch {
+        subs.delete(fn);
+      }
+    }
+    if (subs.size > 0) {
+      rafId = window.requestAnimationFrame(tick);
+    }
+  }
+
+  function ensure() {
+    if (!rafId && subs.size > 0 && document.visibilityState !== 'hidden') {
+      rafId = window.requestAnimationFrame(tick);
+    }
+  }
+
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'hidden') {
+      if (rafId) {
+        window.cancelAnimationFrame(rafId);
+        rafId = 0;
+      }
+    } else {
+      ensure();
+    }
+  });
+
+  return {
+    add(fn: (now: number) => void) {
+      subs.add(fn);
+      ensure();
+    },
+    remove(fn: (now: number) => void) {
+      subs.delete(fn);
+      if (subs.size === 0 && rafId) {
+        window.cancelAnimationFrame(rafId);
+        rafId = 0;
+      }
+    },
+  };
+})();
+
+function setMotionState(on: boolean): void {
+  state.motionOn = Boolean(on);
+  storageSet('kroon.motion', state.motionOn);
+  document.documentElement.classList.toggle('motion-on', state.motionOn);
+  const label = state.motionOn ? 'Motion: on' : 'Motion: off';
+  const heroBtn = document.getElementById('motion-toggle-hero');
+  const mobBtn = document.getElementById('motion-toggle-mobile');
+  [heroBtn, mobBtn].forEach((btn) => {
+    if (btn) {
+      btn.textContent = label;
+      btn.setAttribute('aria-pressed', state.motionOn ? 'true' : 'false');
+    }
+  });
+  window.dispatchEvent(new CustomEvent('kroon:motionchange', { detail: { on: state.motionOn } }));
+}
+
+// Bitmap glyph helpers
+function layoutGlyphLines(lines: string[], gapRows: number, useBold: boolean) {
+  const gap = gapRows || 2;
+  const set = useBold ? GLYPHS_BOLD : GLYPHS;
+  let maxCols = 0;
+  const cells: Array<{ x: number; y: number }> = [];
+  let rowOffset = 0;
+  for (let l = 0; l < lines.length; l++) {
+    const str = lines[l].toUpperCase();
+    let colOffset = 0;
+    for (let i = 0; i < str.length; i++) {
+      const ch = str[i];
+      const g = set[ch] || set[' '];
+      const w = g[0].length;
+      for (let r = 0; r < 9; r++) {
+        for (let c = 0; c < w; c++) {
+          if (g[r][c] === '#') {
+            cells.push({ x: colOffset + c, y: rowOffset + r });
+          }
+        }
+      }
+      colOffset += w + (i < str.length - 1 ? 1 : 0);
+    }
+    if (colOffset > maxCols) maxCols = colOffset;
+    rowOffset += 9 + (l < lines.length - 1 ? gap : 0);
+  }
+  return { cols: maxCols, rows: rowOffset, cells };
+}
+
+function svgBitmapText(
+  str: string | string[],
+  cellH: number,
+  fill: string,
+  opts?: {
+    bold?: boolean;
+    perCell?: boolean;
+    fluid?: boolean;
+    className?: string;
+    ariaHidden?: boolean;
+  }
+): string {
+  const o = opts || {};
+  const layout = layoutGlyphLines(Array.isArray(str) ? str : [str], 2, Boolean(o.bold));
+  const vbW = layout.cols * 5;
+  const vbH = layout.rows * 4;
+  const color = fill || 'currentColor';
+  let rects = '';
+  if (o.perCell) {
+    for (let i = 0; i < layout.cells.length; i++) {
+      const cell = layout.cells[i];
+      rects += `<rect x="${cell.x * 5}" y="${cell.y * 4}" width="5" height="4" data-gx="${cell.x}" data-gy="${cell.y}"/>`;
+    }
+  } else {
+    const rowMap = new Map<number, number[]>();
+    for (let i = 0; i < layout.cells.length; i++) {
+      const cell = layout.cells[i];
+      if (!rowMap.has(cell.y)) rowMap.set(cell.y, []);
+      rowMap.get(cell.y)!.push(cell.x);
+    }
+    rowMap.forEach((xs, y) => {
+      xs.sort((a, b) => a - b);
+      let start = xs[0];
+      let prev = xs[0];
+      for (let k = 1; k <= xs.length; k++) {
+        if (k < xs.length && xs[k] === prev + 1) {
+          prev = xs[k];
+        } else {
+          const span = prev - start + 1;
+          rects += `<rect x="${start * 5}" y="${y * 4}" width="${span * 5}" height="4.04"/>`;
+          if (k < xs.length) {
+            start = xs[k];
+            prev = xs[k];
+          }
+        }
+      }
+    });
+  }
+  const wAttr = o.fluid
+    ? `width="100%"`
+    : `width="${layout.cols * cellH * 1.25}" height="${layout.rows * cellH}"`;
+  const cls = o.className ? ` class="${esc(o.className)}"` : '';
+  const aria = o.ariaHidden ? ` aria-hidden="true"` : '';
+  return `<svg${cls} viewBox="0 0 ${vbW} ${vbH}" ${wAttr} shape-rendering="crispEdges" fill="${color}"${aria}>${rects}</svg>`;
+}
+
+function svgPixelIcon(name: string, size = 15): string {
+  const grids: Record<string, string[]> = {
+    plus: ['..#..', '..#..', '#####', '..#..', '..#..'],
+    minus: ['.....', '.....', '#####', '.....', '.....'],
+    check: ['....#', '...#.', '#.#..', '.#...', '.....'],
+    'arrow-right': ['..#..', '...#.', '#####', '...#.', '..#..'],
+    'tri-up': ['..#..', '.###.', '#####', '.....', '.....'],
+    'tri-down': ['.....', '.....', '#####', '.###.', '..#..'],
+  };
+  const g = grids[name] || grids.plus;
+  let rects = '';
+  for (let y = 0; y < 5; y++) {
+    for (let x = 0; x < 5; x++) {
+      if (g[y][x] === '#') {
+        rects += `<rect x="${x}" y="${y}" width="1" height="1"/>`;
+      }
+    }
+  }
+  return `<svg width="${size}" height="${size}" viewBox="0 0 5 5" shape-rendering="crispEdges" fill="currentColor" aria-hidden="true">${rects}</svg>`;
+}
+
+function svgStrike(): string {
+  return `<svg class="btn-strike" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true"><line x1="0" y1="100" x2="100" y2="0" stroke="currentColor" stroke-width="1" vector-effect="non-scaling-stroke"/></svg>`;
+}
+
+// Tooltip controller
+let tipEl: HTMLElement;
+let tipTimer = 0;
+
+function positionTip(rect: DOMRect): void {
+  const vw = window.innerWidth;
+  const vh = window.innerHeight;
+  tipEl.classList.add('is-visible');
+  const tw = tipEl.offsetWidth;
+  const th = tipEl.offsetHeight;
+  let left = rect.right + 8;
+  let top = rect.top - th - 8;
+  if (left + tw > vw - 8) left = Math.max(8, rect.left - tw - 8);
+  if (top < 8) top = Math.min(vh - th - 8, rect.bottom + 8);
+  tipEl.style.left = `${Math.round(left)}px`;
+  tipEl.style.top = `${Math.round(top)}px`;
+}
+
+function showTip(rect: DOMRect, text: string, immediate: boolean): void {
+  window.clearTimeout(tipTimer);
+  if (!text) return;
+  const run = () => {
+    tipEl.textContent = text;
+    positionTip(rect);
+  };
+  if (immediate) run();
+  else tipTimer = window.setTimeout(run, 120);
+}
+
+function hideTip(): void {
+  window.clearTimeout(tipTimer);
+  if (tipEl) tipEl.classList.remove('is-visible');
+}
+
+// Pixel wipe overlay
+let wipeCanvas: HTMLCanvasElement;
+let wipeActive = false;
+
+function playWipe(onFull?: () => void): void {
+  if (!state.motionOn || wipeActive || !wipeCanvas) {
+    if (onFull) onFull();
+    return;
+  }
+  const ctx = wipeCanvas.getContext('2d');
+  if (!ctx) {
+    if (onFull) onFull();
+    return;
+  }
+  wipeActive = true;
+  const w = window.innerWidth;
+  const h = window.innerHeight;
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  wipeCanvas.width = Math.round(w * dpr);
+  wipeCanvas.height = Math.round(h * dpr);
+  wipeCanvas.classList.add('is-active');
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+  const cell = w >= 768 ? 48 : 32;
+  const cols = Math.ceil(w / cell);
+  const rows = Math.ceil(h / cell);
+  const maxDiag = cols + rows - 2 || 1;
+  const start = performance.now();
+  let swapped = false;
+
+  function step(now: number) {
+    const elapsed = now - start;
+    ctx!.clearRect(0, 0, w, h);
+    if (elapsed < 220) {
+      const prog = elapsed / 220;
+      const limit = prog * (maxDiag + 1);
+      for (let r = 0; r < rows; r++) {
+        for (let c = 0; c < cols; c++) {
+          if (c + r <= limit) {
+            ctx!.fillStyle = TRACK_COLORS[(c + r) % 4];
+            ctx!.fillRect(c * cell, r * cell, cell, cell);
+          }
+        }
+      }
+    } else {
+      if (!swapped) {
+        swapped = true;
+        if (onFull) onFull();
+      }
+      const prog = Math.min(1, (elapsed - 220) / 220);
+      const limit = prog * (maxDiag + 1);
+      for (let r = 0; r < rows; r++) {
+        for (let c = 0; c < cols; c++) {
+          if (c + r > limit) {
+            ctx!.fillStyle = TRACK_COLORS[(c + r) % 4];
+            ctx!.fillRect(c * cell, r * cell, cell, cell);
+          }
+        }
+      }
+      if (prog >= 1) {
+        wipeCanvas.classList.remove('is-active');
+        wipeActive = false;
+        motion.remove(step);
+      }
+    }
+  }
+  motion.add(step);
+}
+
+// Pixel trail
+let trailCanvas: HTMLCanvasElement;
+let trailCells: Array<{ gx: number; gy: number; born: number; color: string }> = [];
+let trailRunning = false;
+let trailColorIdx = 0;
+let lastTrailCellKey = '';
+
+function sizeTrailCanvas(): void {
+  if (!trailCanvas) return;
+  const w = window.innerWidth;
+  const h = window.innerHeight;
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  trailCanvas.width = Math.round(w * dpr);
+  trailCanvas.height = Math.round(h * dpr);
+  const ctx = trailCanvas.getContext('2d');
+  if (ctx) ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+}
+
+function tickTrail(now: number): void {
+  const ctx = trailCanvas.getContext('2d');
+  if (!ctx) {
+    trailRunning = false;
+    motion.remove(tickTrail);
+    return;
+  }
+  const w = window.innerWidth;
+  const h = window.innerHeight;
+  ctx.clearRect(0, 0, w, h);
+  if (!state.motionOn) {
+    trailCells = [];
+    trailRunning = false;
+    motion.remove(tickTrail);
+    return;
+  }
+  const alive: typeof trailCells = [];
+  for (let i = 0; i < trailCells.length; i++) {
+    const c = trailCells[i];
+    const age = now - c.born;
+    if (age >= 420) continue;
+    alive.push(c);
+    ctx.fillStyle = c.color;
+    if (age < 140) {
+      ctx.fillRect(c.gx * 16, c.gy * 16, 16, 16);
+    } else if (age < 280) {
+      ctx.fillRect(c.gx * 16 + 4, c.gy * 16 + 4, 8, 8);
+    } else {
+      ctx.fillRect(c.gx * 16 + 6, c.gy * 16 + 6, 4, 4);
+    }
+  }
+  trailCells = alive;
+  if (trailCells.length === 0) {
+    trailRunning = false;
+    motion.remove(tickTrail);
+  }
+}
+
+function initTrail(): void {
+  if (!window.matchMedia || !window.matchMedia('(pointer: fine)').matches) return;
+  sizeTrailCanvas();
+  window.addEventListener('resize', sizeTrailCanvas, { passive: true });
+  window.addEventListener(
+    'pointermove',
+    (e) => {
+      if (!state.motionOn || document.documentElement.classList.contains('menu-open')) return;
+      const el = document.elementFromPoint(e.clientX, e.clientY);
+      const surfEl = el && el.closest ? el.closest('[data-surface]') : null;
+      const surf = surfEl ? surfEl.getAttribute('data-surface') : 'sodium';
+      const gx = Math.floor(e.clientX / 16);
+      const gy = Math.floor(e.clientY / 16);
+      const key = `${gx},${gy}`;
+      if (key === lastTrailCellKey) return;
+      lastTrailCellKey = key;
+      const color = TRAIL_COLORS[trailColorIdx % TRAIL_COLORS.length];
+      trailColorIdx++;
+      trailCells.push({ gx, gy, born: performance.now(), color });
+      if (trailCells.length > 14) trailCells.shift();
+      if (!trailRunning) {
+        trailRunning = true;
+        motion.add(tickTrail);
+      }
+    },
+    { passive: true }
+  );
+}
+
+// Header, Footer & Menu setup
+function initChrome(): void {
+  const logoLink = document.getElementById('header-logo-link')!;
+  logoLink.innerHTML = svgBitmapText(META.brand, 3, 'currentColor', {
+    perCell: true,
+    className: 'logo-svg',
+    ariaHidden: true,
+  });
+
+  if (window.matchMedia && window.matchMedia('(pointer: fine)').matches) {
+    let jitterTimer = 0;
+    logoLink.addEventListener('mouseenter', () => {
+      if (!state.motionOn) return;
+      const rects = Array.from(logoLink.querySelectorAll('rect'));
+      const dirs = [
+        [5, 0],
+        [-5, 0],
+        [0, 4],
+        [0, -4],
+        [5, 4],
+        [-5, -4],
+      ];
+      const rng = makeRng(Date.now());
+      let step = 0;
+      window.clearInterval(jitterTimer);
+      const apply = () => {
+        step++;
+        if (step > 3) {
+          rects.forEach((r) => {
+            r.setAttribute('x', String(Number(r.dataset.gx) * 5));
+            r.setAttribute('y', String(Number(r.dataset.gy) * 4));
+          });
+          window.clearInterval(jitterTimer);
+          return;
+        }
+        rects.forEach((r) => {
+          const bx = Number(r.dataset.gx) * 5;
+          const by = Number(r.dataset.gy) * 4;
+          if (step === 3) {
+            r.setAttribute('x', String(bx));
+            r.setAttribute('y', String(by));
+          } else {
+            const d = dirs[Math.floor(rng() * dirs.length)];
+            r.setAttribute('x', String(bx + d[0]));
+            r.setAttribute('y', String(by + d[1]));
+          }
+        });
+      };
+      apply();
+      jitterTimer = window.setInterval(apply, 60);
+    });
+  }
+
+  const headerNav = document.getElementById('header-nav')!;
+  headerNav.innerHTML = NAV_ITEMS.map(
+    (n) => `<a class="nav-link t-micro u-anim" href="${esc(n.href)}">${esc(n.label)}</a>`
+  ).join('');
+
+  const menuNav = document.getElementById('menu-nav')!;
+  menuNav.innerHTML = NAV_ITEMS.map(
+    (n) => `<a class="t-h1" href="${esc(n.href)}">${esc(n.label)}</a>`
+  ).join('');
+
+  const footer = document.getElementById('site-footer')!;
+  const stairCells = 96;
+  let stairRects = '';
+  for (let i = 0; i < stairCells; i++) {
+    const col = TRACK_COLORS[Math.floor(i / 4) % 4];
+    stairRects += `<rect x="${i}" y="0" width="1" height="1" fill="${col}"/>`;
+  }
+  footer.innerHTML = `
+    <div class="grid footer-bottom">
+      <p class="footer-ver t-micro">${esc(COPY.version)}</p>
+    </div>
+    <svg class="footer-staircase" viewBox="0 0 ${stairCells} 1" preserveAspectRatio="none" shape-rendering="crispEdges" aria-hidden="true">${stairRects}</svg>
+  `;
+
+  document
+    .getElementById('motion-toggle-mobile')!
+    .addEventListener('click', () => setMotionState(!state.motionOn));
+  setMotionState(state.motionOn);
+
+  const menuEl = document.getElementById('menu')!;
+  const openBtn = document.getElementById('menu-open-btn')!;
+  const closeBtn = document.getElementById('menu-close-btn')!;
+
+  function closeMenu(returnFocus: boolean) {
+    menuEl.classList.remove('is-open');
+    document.documentElement.classList.remove('menu-open');
+    openBtn.setAttribute('aria-expanded', 'false');
+    if (returnFocus) openBtn.focus();
+  }
+
+  function openMenu() {
+    const reveal = () => {
+      menuEl.classList.add('is-open');
+      document.documentElement.classList.add('menu-open');
+      openBtn.setAttribute('aria-expanded', 'true');
+      closeBtn.focus();
+    };
+    playWipe(reveal);
+  }
+
+  openBtn.addEventListener('click', openMenu);
+  closeBtn.addEventListener('click', () => closeMenu(true));
+  menuEl.addEventListener('click', (e) => {
+    if ((e.target as HTMLElement).closest('a')) closeMenu(false);
+  });
+  menuEl.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') {
+      e.preventDefault();
+      closeMenu(true);
+      return;
+    }
+    if (e.key === 'Tab') {
+      const focusables = Array.from(menuEl.querySelectorAll<HTMLElement>('a, button'));
+      if (focusables.length === 0) return;
+      const first = focusables[0];
+      const last = focusables[focusables.length - 1];
+      if (e.shiftKey && document.activeElement === first) {
+        e.preventDefault();
+        last.focus();
+      } else if (!e.shiftKey && document.activeElement === last) {
+        e.preventDefault();
+        first.focus();
+      }
+    }
+  });
+
+  const topBtn = document.getElementById('top-btn')!;
+  topBtn.addEventListener('click', () => {
+    window.scrollTo({ top: 0, behavior: state.motionOn ? 'smooth' : 'auto' });
+  });
+
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') hideTip();
+  });
+}
+
+// Surface + reveal observers
+let surfaceHeaderIO: IntersectionObserver | null = null;
+let surfaceBottomIO: IntersectionObserver | null = null;
+let revealIO: IntersectionObserver | null = null;
+
+function setupObservers(): void {
+  if (surfaceHeaderIO) surfaceHeaderIO.disconnect();
+  if (surfaceBottomIO) surfaceBottomIO.disconnect();
+  if (revealIO) revealIO.disconnect();
+
+  const header = document.getElementById('site-header')!;
+  const topBtn = document.getElementById('top-btn')!;
+
+  const surfaceEls = Array.from(document.querySelectorAll('[data-surface]')).filter(
+    (el) => el.id !== 'site-header' && el.id !== 'menu' && el.id !== 'top-btn'
+  );
+
+  const setHeaderSurface = (surf: string | null) => {
+    if (surf) header.setAttribute('data-surface', surf);
+  };
+  const setBottomSurface = (surf: string | null) => {
+    if (surf) topBtn.setAttribute('data-surface', surf);
+  };
+
+  const syncSurfacesAtScroll = () => {
+    const hh = header.getBoundingClientRect().height || 64;
+    const topY = hh + 4;
+    const botY = window.innerHeight - 20;
+    for (const el of surfaceEls) {
+      const r = el.getBoundingClientRect();
+      if (r.top <= topY && r.bottom >= topY) setHeaderSurface(el.getAttribute('data-surface'));
+      if (r.top <= botY && r.bottom >= botY) setBottomSurface(el.getAttribute('data-surface'));
+    }
+    topBtn.classList.toggle('is-visible', window.scrollY >= window.innerHeight);
+  };
+
+  surfaceHeaderIO = new IntersectionObserver(
+    (entries) => {
+      for (const entry of entries) {
+        if (entry.isIntersecting) {
+          setHeaderSurface(entry.target.getAttribute('data-surface'));
+        }
+      }
+    },
+    { rootMargin: '-65px 0px -88% 0px' }
+  );
+
+  surfaceBottomIO = new IntersectionObserver(
+    (entries) => {
+      for (const entry of entries) {
+        if (entry.isIntersecting) {
+          setBottomSurface(entry.target.getAttribute('data-surface'));
+        }
+      }
+    },
+    { rootMargin: '-95% 0px -1px 0px' }
+  );
+
+  surfaceEls.forEach((el) => {
+    surfaceHeaderIO!.observe(el);
+    surfaceBottomIO!.observe(el);
+  });
+
+  window.addEventListener('scroll', syncSurfacesAtScroll, { passive: true });
+  state.routeCleanup.push(() => window.removeEventListener('scroll', syncSurfacesAtScroll));
+  syncSurfacesAtScroll();
+
+  const revealEls = Array.from(document.querySelectorAll('.reveal-text, .reveal-block'));
+  if (!state.motionOn) {
+    revealEls.forEach((el) => {
+      el.classList.remove('is-pending');
+      el.classList.add('is-shown');
+    });
+  } else {
+    revealEls.forEach((el) => el.classList.add('is-pending'));
+    revealIO = new IntersectionObserver(
+      (entries) => {
+        let batch = 0;
+        for (const entry of entries) {
+          if (entry.isIntersecting) {
+            const el = entry.target;
+            const delay = Math.min(batch, 7) * 40;
+            batch++;
+            window.setTimeout(() => {
+              el.classList.remove('is-pending');
+              el.classList.add('is-shown');
+            }, delay);
+            revealIO!.unobserve(el);
+          }
+        }
+      },
+      { threshold: 0.15 }
+    );
+    revealEls.forEach((el) => revealIO!.observe(el));
+  }
+}
+
+// 32x32 Project Art Canvas Renderer
+function initArtCanvas(
+  canvas: HTMLCanvasElement,
+  project: ProjectItem,
+  opts?: { blockSize?: number; skipAssemble?: boolean }
+) {
+  const o = opts || {};
+  const rows = project.art.rows;
+  const pal = project.art.pal;
+
+  let blockSize = o.blockSize || 1;
+  let currentGrid = poolGrid(rows, blockSize);
+  let assembled = !state.motionOn || Boolean(o.skipAssemble);
+  let assembleStart = 0;
+  let waveStart = 0;
+  let waveDir = 0;
+  let swapped = false;
+  let animActive = false;
+  let lastSize = 0;
+  let prevGrid = currentGrid;
+  let sweepActive = false;
+  let sweepStart = 0;
+
+  const rng = makeRng(hashStr(project.id));
+  const fgIndices: number[] = [];
+  for (let y = 0; y < 32; y++) {
+    for (let x = 0; x < 32; x++) {
+      if (currentGrid[y][x] !== '0') fgIndices.push(y * 32 + x);
+    }
+  }
+  for (let i = fgIndices.length - 1; i > 0; i--) {
+    const j = Math.floor(rng() * (i + 1));
+    const tmp = fgIndices[i];
+    fgIndices[i] = fgIndices[j];
+    fgIndices[j] = tmp;
+  }
+  const orderRank = new Int16Array(1024).fill(-1);
+  fgIndices.forEach((pos, idx) => {
+    orderRank[pos] = idx;
+  });
+
+  function poolGrid(srcRows: string[], bSize: number): string[] {
+    if (bSize <= 1) return srcRows;
+    const out: string[] = [];
+    for (let y = 0; y < 32; y += bSize) {
+      const blockRows: string[] = [];
+      for (let dy = 0; dy < bSize; dy++) blockRows.push('');
+      for (let x = 0; x < 32; x += bSize) {
+        const counts = [0, 0, 0, 0];
+        for (let dy = 0; dy < bSize; dy++) {
+          const r = srcRows[y + dy];
+          for (let dx = 0; dx < bSize; dx++) {
+            counts[Number(r[x + dx]) || 0]++;
+          }
+        }
+        let bestIdx = 0;
+        let bestCount = -1;
+        for (let c = 0; c < 4; c++) {
+          if (counts[c] > bestCount) {
+            bestCount = counts[c];
+            bestIdx = c;
+          }
+        }
+        const ch = String(bestIdx);
+        for (let dy = 0; dy < bSize; dy++) {
+          blockRows[dy] += ch.repeat(bSize);
+        }
+      }
+      for (let dy = 0; dy < bSize; dy++) out.push(blockRows[dy]);
+    }
+    return out;
+  }
+
+  function sizeCanvas(): boolean {
+    const rect = canvas.getBoundingClientRect();
+    const cssSize = Math.round(rect.width);
+    if (cssSize <= 0 || cssSize === lastSize) return cssSize > 0;
+    lastSize = cssSize;
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    canvas.width = Math.round(cssSize * dpr);
+    canvas.height = Math.round(cssSize * dpr);
+    const ctx = canvas.getContext('2d');
+    if (ctx) ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    return true;
+  }
+
+  function drawFrame(now: number) {
+    const ctx = canvas.getContext('2d');
+    if (!ctx || lastSize <= 0) return;
+    const size = lastSize;
+    const cell = Math.floor(size / 32);
+    const gridPx = cell * 32;
+    const ox = Math.floor((size - gridPx) / 2);
+    const oy = Math.floor((size - gridPx) / 2);
+
+    ctx.fillStyle = pal[0];
+    ctx.fillRect(0, 0, size, size);
+
+    let assembleLimit = fgIndices.length;
+    if (!assembled) {
+      const elapsed = now - assembleStart;
+      const p = Math.min(1, Math.max(0, elapsed / 640));
+      assembleLimit = Math.floor(p * fgIndices.length);
+      if (p >= 1) assembled = true;
+    }
+
+    let waveElapsed = -1;
+    let waveDone = true;
+    if (waveDir !== 0) {
+      waveElapsed = now - waveStart;
+      if (waveElapsed < 360) waveDone = false;
+      else {
+        swapped = waveDir === 1;
+        waveDir = 0;
+      }
+    }
+
+    let sweepElapsed = -1;
+    let sweepDone = true;
+    if (sweepActive) {
+      sweepElapsed = now - sweepStart;
+      if (sweepElapsed < 200) sweepDone = false;
+      else sweepActive = false;
+    }
+
+    for (let y = 0; y < 32; y++) {
+      let runStart = 0;
+      let runIdx = -1;
+      for (let x = 0; x <= 32; x++) {
+        let idx = 0;
+        if (x < 32) {
+          const useOld = sweepActive && !sweepDone && ((x + y) / 62) * 200 > sweepElapsed;
+          const srcGrid = useOld ? prevGrid : currentGrid;
+          const raw = Number(srcGrid[y][x]) || 0;
+          if (!assembled && raw !== 0) {
+            const rank = orderRank[y * 32 + x];
+            idx = rank < assembleLimit ? raw : 0;
+          } else {
+            idx = raw;
+          }
+          let isSwapped = swapped;
+          if (waveDir !== 0) {
+            const threshold = ((x + y) / 62) * 360;
+            if (waveDir === 1) isSwapped = waveElapsed >= threshold;
+            else isSwapped = waveElapsed < threshold;
+          }
+          if (isSwapped && (idx === 0 || idx === 1)) {
+            idx = idx === 0 ? 1 : 0;
+          }
+        }
+        if (x === 0) {
+          runIdx = idx;
+          runStart = 0;
+        } else if (x === 32 || idx !== runIdx) {
+          if (runIdx !== 0 || swapped || waveDir !== 0) {
+            ctx.fillStyle = pal[runIdx];
+            ctx.fillRect(ox + runStart * cell, oy + y * cell, (x - runStart) * cell, cell);
+          }
+          runStart = x;
+          runIdx = idx;
+        }
+      }
+    }
+
+    if (assembled && waveDone && sweepDone) {
+      animActive = false;
+      motion.remove(drawFrame);
+    }
+  }
+
+  function startAnim() {
+    if (!animActive) {
+      animActive = true;
+      motion.add(drawFrame);
+    }
+  }
+
+  function renderImmediate() {
+    if (sizeCanvas()) drawFrame(performance.now());
+  }
+
+  const io = new IntersectionObserver(
+    (entries) => {
+      for (const entry of entries) {
+        if (entry.isIntersecting) {
+          io.disconnect();
+          sizeCanvas();
+          if (!state.motionOn || o.skipAssemble) {
+            assembled = true;
+            drawFrame(performance.now());
+          } else {
+            assembled = false;
+            assembleStart = performance.now();
+            startAnim();
+          }
+        }
+      }
+    },
+    { threshold: 0.3 }
+  );
+  io.observe(canvas);
+
+  let rTimer = 0;
+  const ro = new ResizeObserver(() => {
+    window.clearTimeout(rTimer);
+    rTimer = window.setTimeout(() => {
+      const prev = lastSize;
+      sizeCanvas();
+      if (lastSize !== prev) drawFrame(performance.now());
+    }, 150);
+  });
+  ro.observe(canvas);
+
+  const hoverTarget = canvas.closest('a') || canvas;
+  if (window.matchMedia && window.matchMedia('(hover: hover)').matches) {
+    const triggerSwap = (toSwapped: boolean) => {
+      if (!state.motionOn) {
+        swapped = toSwapped;
+        waveDir = 0;
+        drawFrame(performance.now());
+        return;
+      }
+      waveDir = toSwapped ? 1 : -1;
+      waveStart = performance.now();
+      startAnim();
+    };
+    hoverTarget.addEventListener('mouseenter', () => triggerSwap(true));
+    hoverTarget.addEventListener('mouseleave', () => triggerSwap(false));
+    hoverTarget.addEventListener('focusin', () => triggerSwap(true));
+    hoverTarget.addEventListener('focusout', () => triggerSwap(false));
+  }
+
+  const onMotionChange = () => {
+    if (!state.motionOn) {
+      assembled = true;
+      sweepActive = false;
+      waveDir = 0;
+      swapped = false;
+      renderImmediate();
+    }
+  };
+  window.addEventListener('kroon:motionchange', onMotionChange);
+
+  state.routeCleanup.push(() => {
+    io.disconnect();
+    ro.disconnect();
+    window.clearTimeout(rTimer);
+    motion.remove(drawFrame);
+    window.removeEventListener('kroon:motionchange', onMotionChange);
+  });
+
+  window.requestAnimationFrame(renderImmediate);
+
+  return {
+    setBlockSize(newSize: number) {
+      if (newSize === blockSize) return;
+      prevGrid = currentGrid;
+      blockSize = newSize;
+      currentGrid = poolGrid(rows, blockSize);
+      if (!state.motionOn) {
+        sweepActive = false;
+        drawFrame(performance.now());
+      } else {
+        sweepActive = true;
+        sweepStart = performance.now();
+        startAnim();
+      }
+    },
+  };
+}
+
+// Availability / Studio Capacity Grid
+function buildCapacityGrid(
+  container: HTMLElement,
+  opts?: { instant?: boolean; withSelection?: boolean }
+) {
+  const o = opts || {};
+  const sprint = ENGAGEMENT_TIERS[0];
+  const build = ENGAGEMENT_TIERS[1];
+  const advisory = ENGAGEMENT_TIERS[2];
+  const total = META.totalWeeks;
+  const cols = window.innerWidth < 768 ? 9 : 18;
+  const rows = Math.ceil(total / cols);
+  const gap = window.innerWidth >= 1024 ? 3 : 2;
+  const cell = 14;
+  const step = cell + gap;
+  const vbW = cols * step - gap;
+  const vbH = rows * step - gap;
+
+  const cellsMeta: Array<{ idx: number; tier: string; color: string; label: string }> = [];
+  for (let i = 0; i < total; i++) {
+    let tier = 'open';
+    let color = TOKENS.sodium;
+    let label = `Week ${i + 1} of ${total} · open for booking`;
+    if (i < sprint.booked) {
+      tier = 'sprint';
+      color = sprint.color;
+      label = `Week ${i + 1} of ${total} · Design System Sprint (booked)`;
+    } else if (i < sprint.booked + build.booked) {
+      tier = 'build';
+      color = build.color;
+      label = `Week ${i + 1} of ${total} · Product & Graphics Build (booked)`;
+    } else if (i < sprint.booked + build.booked + advisory.booked) {
+      tier = 'advisory';
+      color = advisory.color;
+      label = `Week ${i + 1} of ${total} · Architecture Advisory (booked)`;
+    }
+    cellsMeta.push({ idx: i, tier, color, label });
+  }
+
+  const bookedTotal = sprint.booked + build.booked + advisory.booked;
+  const openTotal = total - bookedTotal;
+
+  let rects = '';
+  for (let i = 0; i < total; i++) {
+    const c = i % cols;
+    const r = Math.floor(i / cols);
+    const x = c * step;
+    const y = r * step;
+    const m = cellsMeta[i];
+    if (m.tier === 'open') {
+      rects += `<rect data-ci="${i}" x="${x + 0.5}" y="${y + 0.5}" width="${cell - 1}" height="${cell - 1}" fill="#171919" stroke="rgba(254,254,255,0.25)" stroke-width="1"/>`;
+    } else {
+      rects += `<rect data-ci="${i}" x="${x}" y="${y}" width="${cell}" height="${cell}" fill="${m.color}" stroke="#171919" stroke-width="1"/>`;
+    }
+  }
+
+  container.innerHTML = `
+    <figure class="capacity-fig">
+      <div class="capacity-svg-wrap" tabindex="0" role="img" aria-label="2027 studio calendar: ${bookedTotal} of ${total} weeks booked, ${openTotal} open. Use arrow keys to inspect weeks.">
+        <svg class="capacity-svg" viewBox="0 0 ${vbW} ${vbH}" shape-rendering="crispEdges" aria-hidden="true">${rects}<rect id="cap-focus-ring" x="0" y="0" width="${cell}" height="${cell}" fill="none" stroke="#2E5FCE" stroke-width="2" visibility="hidden"/></svg>
+      </div>
+      <figcaption class="t-micro" style="margin-top:8px;">Fig. 1 — 2027 studio allocation: ${total} sprint weeks total.</figcaption>
+      <ul class="capacity-legend t-micro">
+        <li class="legend-item"><span class="legend-swatch" style="background:${sprint.color}"></span>Design Systems, ${sprint.booked} wks booked</li>
+        <li class="legend-item"><span class="legend-swatch" style="background:${build.color}"></span>Product &amp; Graphics, ${build.booked} wks booked</li>
+        <li class="legend-item"><span class="legend-swatch" style="background:${advisory.color}"></span>Advisory, ${advisory.booked} wks booked</li>
+        <li class="legend-item"><span class="legend-swatch" style="background:#171919; border: 1px solid rgba(254,254,255,0.25)"></span>Open, ${openTotal} wks</li>
+        ${o.withSelection ? `<li class="legend-item"><span class="legend-swatch" style="background:#2E5FCE"></span>Selected scope</li>` : ''}
+      </ul>
+    </figure>
+  `;
+
+  const svg = container.querySelector('.capacity-svg')!;
+  const wrap = container.querySelector('.capacity-svg-wrap')!;
+  const focusRing = svg.querySelector('#cap-focus-ring')!;
+  const rectEls = Array.from(svg.querySelectorAll('rect[data-ci]'));
+  let filledCount = 0;
+  let selectedOverlay = 0;
+
+  function paintCell(i: number, isSelected: boolean) {
+    const m = cellsMeta[i];
+    const el = rectEls[i];
+    if (!el) return;
+    if (isSelected) {
+      el.setAttribute('fill', '#2E5FCE');
+      el.removeAttribute('stroke');
+    } else if (m.tier === 'open' || i >= filledCount) {
+      el.setAttribute('fill', '#171919');
+      el.setAttribute('stroke', 'rgba(254,254,255,0.25)');
+      el.setAttribute('stroke-width', '1');
+    } else {
+      el.setAttribute('fill', m.color);
+      el.removeAttribute('stroke');
+    }
+  }
+
+  function fillImmediate() {
+    filledCount = bookedTotal;
+    for (let i = 0; i < bookedTotal; i++) paintCell(i, false);
+    for (let i = bookedTotal; i < total; i++) {
+      paintCell(i, i - bookedTotal < selectedOverlay);
+    }
+  }
+
+  let fillAnimRunning = false;
+  function tickFill() {
+    const nextEnd = Math.min(bookedTotal, filledCount + 2);
+    for (let i = filledCount; i < nextEnd; i++) {
+      filledCount = i + 1;
+      paintCell(i, false);
+    }
+    if (filledCount >= bookedTotal) {
+      fillAnimRunning = false;
+      motion.remove(tickFill);
+    }
+  }
+
+  if (!state.motionOn || o.instant) {
+    fillImmediate();
+  } else {
+    const io = new IntersectionObserver(
+      (entries) => {
+        for (const entry of entries) {
+          if (entry.isIntersecting) {
+            io.disconnect();
+            if (!state.motionOn) {
+              fillImmediate();
+            } else if (!fillAnimRunning) {
+              fillAnimRunning = true;
+              motion.add(tickFill);
+            }
+          }
+        }
+      },
+      { threshold: 0.3 }
+    );
+    io.observe(svg);
+    state.routeCleanup.push(() => {
+      io.disconnect();
+      motion.remove(tickFill);
+    });
+  }
+
+  svg.addEventListener('pointermove', (e) => {
+    const rectEl = (e.target as HTMLElement).closest('rect[data-ci]') as SVGRectElement | null;
+    if (!rectEl) {
+      hideTip();
+      return;
+    }
+    const idx = Number(rectEl.dataset.ci);
+    const isSel = idx >= bookedTotal && idx - bookedTotal < selectedOverlay;
+    const msg = isSel ? `Week ${idx + 1} of ${total} · in your scope` : cellsMeta[idx].label;
+    showTip(rectEl.getBoundingClientRect(), msg, false);
+  });
+  svg.addEventListener('pointerleave', hideTip);
+
+  let keyIdx = 0;
+  const showKeyCell = () => {
+    const c = keyIdx % cols;
+    const r = Math.floor(keyIdx / cols);
+    focusRing.setAttribute('x', String(c * step - 1));
+    focusRing.setAttribute('y', String(r * step - 1));
+    focusRing.setAttribute('width', String(cell + 2));
+    focusRing.setAttribute('height', String(cell + 2));
+    focusRing.setAttribute('visibility', 'visible');
+    const isSel = keyIdx >= bookedTotal && keyIdx - bookedTotal < selectedOverlay;
+    const msg = isSel ? `Week ${keyIdx + 1} of ${total} · in your scope` : cellsMeta[keyIdx].label;
+    showTip(rectEls[keyIdx].getBoundingClientRect(), msg, true);
+  };
+
+  wrap.addEventListener('focus', showKeyCell);
+  wrap.addEventListener('blur', () => {
+    focusRing.setAttribute('visibility', 'hidden');
+    hideTip();
+  });
+  wrap.addEventListener('keydown', (e: Event) => {
+    const ke = e as KeyboardEvent;
+    if (ke.key === 'ArrowRight') keyIdx = Math.min(total - 1, keyIdx + 1);
+    else if (ke.key === 'ArrowLeft') keyIdx = Math.max(0, keyIdx - 1);
+    else if (ke.key === 'ArrowDown') keyIdx = Math.min(total - 1, keyIdx + cols);
+    else if (ke.key === 'ArrowUp') keyIdx = Math.max(0, keyIdx - cols);
+    else return;
+    ke.preventDefault();
+    showKeyCell();
+  });
+
+  let selTimer = 0;
+  return {
+    setSelected(count: number) {
+      window.clearInterval(selTimer);
+      const clamped = Math.min(openTotal, Math.max(0, count));
+      if (!state.motionOn) {
+        selectedOverlay = clamped;
+        for (let i = bookedTotal; i < total; i++) {
+          paintCell(i, i - bookedTotal < selectedOverlay);
+        }
+        return;
+      }
+      if (clamped === selectedOverlay) return;
+      selTimer = window.setInterval(() => {
+        if (selectedOverlay < clamped) {
+          selectedOverlay++;
+          paintCell(bookedTotal + selectedOverlay - 1, true);
+        } else if (selectedOverlay > clamped) {
+          paintCell(bookedTotal + selectedOverlay - 1, false);
+          selectedOverlay--;
+        }
+        if (selectedOverlay === clamped) window.clearInterval(selTimer);
+      }, 45);
+    },
+  };
+}
+
+// Landing Page (#/) — 8 Sections
+function renderHome(main: HTMLElement): void {
+  document.title = COPY.homeTitle;
+
+  main.innerHTML = `
+    <section class="hero-sec" id="hero" data-surface="sodium">
+      <h1 class="visually-hidden">${esc(COPY.heroH1)}</h1>
+
+      <figure class="hero-display-wrap">
+        <canvas class="hero-canvas" id="hero-canvas" aria-hidden="true"></canvas>
+      </figure>
+    </section>
+
+    <section class="sec" id="about" data-surface="sodium">
+      <div class="grid">
+        <p class="col-1-3 t-micro">About</p>
+        <h2 class="col-5-12 t-h2 reveal-text">${esc(COPY.aboutLead)}</h2>
+      </div>
+      <div class="grid about-paras">
+        <p class="about-para-1 t-body reveal-text">${esc(COPY.aboutP1)}</p>
+        <p class="about-para-2 t-body reveal-text">${esc(COPY.aboutP2)}</p>
+      </div>
+      <div class="grid about-cta-row">
+        <div class="col-5-12">
+          <a class="btn-primary t-small" href="#/projects"><span>View selected work</span></a>
+        </div>
+      </div>
+    </section>
+
+    <section class="sec" id="tracks" data-surface="ink">
+      <div class="grid">
+        <p class="col-1-3 t-micro">Disciplines</p>
+        <h2 class="col-5-12 t-h2 t-paper reveal-text">${esc(COPY.tracksLead)}</h2>
+      </div>
+      <div class="grid tracks-grid" id="tracks-grid"></div>
+    </section>
+
+    <section class="sec" id="speakers-preview" data-surface="sodium">
+      <div class="grid">
+        <p class="col-1-3 t-micro">Selected work</p>
+        <h2 class="col-5-12 t-h2 reveal-text">${esc(COPY.speakersLead)}</h2>
+        <div class="col-full speakers-preview-grid" id="speakers-preview-grid"></div>
+        <div class="col-full speakers-footer-link">
+          <a class="btn-text t-micro u-anim" href="#/projects">Explore all case studies &amp; metrics</a>
+        </div>
+      </div>
+    </section>
+
+    <section class="sec" id="home-contact" data-surface="ink">
+      <div class="grid">
+        <p class="col-1-3 t-micro">Contact</p>
+        <div class="col-full home-contact-canvas-wrap">
+          <h2 class="visually-hidden">Let's build something real.</h2>
+          <canvas class="hero-canvas" id="contact-canvas" aria-hidden="true"></canvas>
+        </div>
+        <div class="col-full home-contact-cta">
+          <a class="btn-primary t-small" href="#/contact"><span>Let's Talk</span></a>
+        </div>
+      </div>
+    </section>
+  `;
+
+  initCycleCanvas('hero-canvas', COPY.heroCycle, '#171919', '#FEFEFF', 0.68, 'hero');
+  initCycleCanvas('contact-canvas', COPY.contactCycle, '#121313', '#FEFEFF', 0.5, 'contact');
+  initDisciplinePanels();
+  initProjectsPreview();
+}
+
+// Bitmap Particle Cycle Canvas (Hero & Contact)
+function initCycleCanvas(
+  canvasId: string,
+  items: ReadonlyArray<{ desktop: string[]; mobile: string[] }>,
+  bgColor: string,
+  fgColor: string,
+  yRatio: number,
+  seedPrefix: string
+): void {
+  const canvasMaybe = document.getElementById(canvasId) as HTMLCanvasElement | null;
+  if (!canvasMaybe) return;
+  const canvas: HTMLCanvasElement = canvasMaybe;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return;
+
+  let cssW = 0;
+  let cssH = 0;
+  let dpr = 1;
+  let isMobile = window.innerWidth < 768;
+  let cycleIdx = 0;
+  interface Particle {
+    sx: number;
+    sy: number;
+    sw: number;
+    sh: number;
+    tx: number;
+    ty: number;
+    tw: number;
+    th: number;
+    x: number;
+    y: number;
+    w: number;
+    h: number;
+    vx: number;
+    vy: number;
+    delay: number;
+    color: string;
+    sparkle: boolean;
+  }
+  let particles: Particle[] = [];
+  let morphStart = 0;
+  let morphDuration = 1200;
+  let isAssembling = true;
+  let holdTimer = 0;
+  let inView = true;
+  let running = false;
+  let pointerX = -9999;
+  let pointerY = -9999;
+
+  function getTargetLayout(idx: number) {
+    const item = items[idx];
+    const lines = isMobile ? item.mobile : item.desktop;
+    const layout = layoutGlyphLines(lines, 2, true);
+    const w = cssW || 1000;
+    const h = cssH || 200;
+    const maxW = w / layout.cols;
+    const maxH_w = (h / layout.rows) * 1.25;
+    const cellW = Math.min(maxW, maxH_w);
+    const cellH = cellW / 1.25;
+    const ox = 0;
+    const oy = (h - layout.rows * cellH) * yRatio;
+    const cells = layout.cells.map((c) => ({
+      nx: (ox + c.x * cellW) / w,
+      ny: (oy + c.y * cellH) / h,
+      nw: cellW / w,
+      nh: cellH / h,
+      gx: c.x,
+      gy: c.y,
+    }));
+    return {
+      layout,
+      cellW,
+      cellH,
+      ox,
+      oy,
+      cells,
+    };
+  }
+
+  function sizeCanvas() {
+    const rect = canvas.getBoundingClientRect();
+    isMobile = window.innerWidth < 768;
+    cssW = rect.width;
+    cssH = rect.height;
+    if (cssW <= 0 || cssH <= 0) return;
+    dpr = Math.min(window.devicePixelRatio || 1, 2);
+    canvas.width = Math.round(cssW * dpr);
+    canvas.height = Math.round(cssH * dpr);
+    ctx!.setTransform(dpr, 0, 0, dpr, 0, 0);
+  }
+
+  function buildParticlesForTarget(idx: number, assembleFromRandom: boolean) {
+    const t = getTargetLayout(idx);
+    const rng = makeRng(hashStr(seedPrefix + '-' + idx + '-' + Date.now()));
+    const newParticles: Particle[] = [];
+    const targetCells = t.cells;
+    const oldParticles = particles;
+
+    if (assembleFromRandom || oldParticles.length === 0) {
+      for (let i = 0; i < targetCells.length; i++) {
+        const tc = targetCells[i];
+        const sx = assembleFromRandom ? rng() * (1 - tc.nw) : tc.nx;
+        const sy = assembleFromRandom ? rng() * (1 - tc.nh) : tc.ny;
+        newParticles.push({
+          sx,
+          sy,
+          sw: tc.nw,
+          sh: tc.nh,
+          tx: tc.nx,
+          ty: tc.ny,
+          tw: tc.nw,
+          th: tc.nh,
+          x: sx,
+          y: sy,
+          w: tc.nw,
+          h: tc.nh,
+          vx: 0,
+          vy: 0,
+          delay: assembleFromRandom ? rng() * 400 : 0,
+          color: fgColor,
+          sparkle: false,
+        });
+      }
+      isAssembling = assembleFromRandom;
+      morphDuration = 1200;
+    } else {
+      const count = Math.max(oldParticles.length, targetCells.length);
+      for (let i = 0; i < count; i++) {
+        const src = oldParticles[i % oldParticles.length];
+        const dst = targetCells[i % targetCells.length];
+        const isSparkle = rng() < 0.14;
+        newParticles.push({
+          sx: src.x,
+          sy: src.y,
+          sw: src.w,
+          sh: src.h,
+          tx: dst.nx,
+          ty: dst.ny,
+          tw: dst.nw,
+          th: dst.nh,
+          x: src.x,
+          y: src.y,
+          w: src.w,
+          h: src.h,
+          vx: 0,
+          vy: 0,
+          delay: dst.nx * 300,
+          color: isSparkle ? TRACK_COLORS[Math.floor(rng() * 4)] : fgColor,
+          sparkle: isSparkle,
+        });
+      }
+      isAssembling = false;
+      morphDuration = 900;
+    }
+    particles = newParticles;
+    morphStart = performance.now();
+  }
+
+  function drawCrispSettled(idx: number) {
+    const t = getTargetLayout(idx);
+    ctx!.fillStyle = fgColor;
+    const rowMap = new Map<number, number[]>();
+    for (let i = 0; i < t.layout.cells.length; i++) {
+      const c = t.layout.cells[i];
+      if (!rowMap.has(c.y)) rowMap.set(c.y, []);
+      rowMap.get(c.y)!.push(c.x);
+    }
+    rowMap.forEach((xs, y) => {
+      xs.sort((a, b) => a - b);
+      let start = xs[0];
+      let prev = xs[0];
+      const y0 = Math.round((t.oy + y * t.cellH) * dpr) / dpr;
+      const y1 = Math.round((t.oy + (y + 1) * t.cellH) * dpr) / dpr;
+      for (let k = 1; k <= xs.length; k++) {
+        if (k < xs.length && (xs[k] === prev + 1 || xs[k] === prev)) {
+          prev = xs[k];
+        } else {
+          const x0 = Math.round((t.ox + start * t.cellW) * dpr) / dpr;
+          const x1 = Math.round((t.ox + (prev + 1) * t.cellW) * dpr) / dpr;
+          ctx!.fillRect(x0, y0, x1 - x0, y1 - y0);
+          if (k < xs.length) {
+            start = xs[k];
+            prev = xs[k];
+          }
+        }
+      }
+    });
+  }
+
+  function drawStatic(idx = 0) {
+    sizeCanvas();
+    if (cssW <= 0) return;
+    ctx!.fillStyle = bgColor;
+    ctx!.fillRect(0, 0, cssW, cssH);
+    drawCrispSettled(idx);
+  }
+
+  function step(now: number) {
+    if (!state.motionOn) {
+      running = false;
+      motion.remove(step);
+      drawStatic(cycleIdx);
+      return;
+    }
+    if (cssW <= 0) sizeCanvas();
+    if (cssW <= 0) return;
+
+    const elapsed = now - morphStart;
+    const easeFn = isAssembling ? easeAssemble : easeMorph;
+    const t = getTargetLayout(cycleIdx);
+    const repelRadius = Math.max(24, t.cellW * 3);
+    const maxDispPx = t.cellW * 1.5;
+
+    ctx!.fillStyle = bgColor;
+    ctx!.fillRect(0, 0, cssW, cssH);
+
+    const buckets = new Map<string, Particle[]>();
+    buckets.set(fgColor, []);
+    let allSettled = pointerX < -5000;
+
+    for (let i = 0; i < particles.length; i++) {
+      const p = particles[i];
+      const localT = Math.min(1, Math.max(0, (elapsed - p.delay) / morphDuration));
+      const e = easeFn(localT);
+      const baseX = p.sx + (p.tx - p.sx) * e;
+      const baseY = p.sy + (p.ty - p.sy) * e;
+      p.w = p.sw + (p.tw - p.sw) * e;
+      p.h = p.sh + (p.th - p.sh) * e;
+
+      let targetDx = 0;
+      let targetDy = 0;
+      if (pointerX > -5000) {
+        const px = (baseX + p.w * 0.5) * cssW;
+        const py = (baseY + p.h * 0.5) * cssH;
+        const dx = px - pointerX;
+        const dy = py - pointerY;
+        const dist = Math.hypot(dx, dy);
+        if (dist > 0.001 && dist < repelRadius) {
+          const push = (1 - dist / repelRadius) * maxDispPx;
+          targetDx = ((dx / dist) * push) / cssW;
+          targetDy = ((dy / dist) * push) / cssH;
+        }
+      }
+      if (localT >= 1 && pointerX < -5000) {
+        p.vx = 0;
+        p.vy = 0;
+        p.x = p.tx;
+        p.y = p.ty;
+      } else {
+        allSettled = false;
+        p.vx = (p.vx + (targetDx - (p.x - baseX)) * 0.12) * 0.8;
+        p.vy = (p.vy + (targetDy - (p.y - baseY)) * 0.12) * 0.8;
+        p.x = baseX + (p.x - baseX) + p.vx;
+        p.y = baseY + (p.y - baseY) + p.vy;
+      }
+
+      const col = p.sparkle && elapsed < 400 ? p.color : fgColor;
+      if (!buckets.has(col)) buckets.set(col, []);
+      buckets.get(col)!.push(p);
+    }
+
+    if (allSettled && elapsed >= 400) {
+      drawCrispSettled(cycleIdx);
+    } else {
+      buckets.forEach((list, col) => {
+        ctx!.fillStyle = col;
+        for (let i = 0; i < list.length; i++) {
+          const p = list[i];
+          const x0 = Math.round(p.x * cssW * dpr) / dpr;
+          const y0 = Math.round(p.y * cssH * dpr) / dpr;
+          const x1 = Math.round((p.x + p.w) * cssW * dpr) / dpr;
+          const y1 = Math.round((p.y + p.h) * cssH * dpr) / dpr;
+          ctx!.fillRect(x0, y0, x1 - x0, y1 - y0);
+        }
+      });
+    }
+  }
+
+  function scheduleNext() {
+    window.clearTimeout(holdTimer);
+    if (!state.motionOn || !inView) return;
+    holdTimer = window.setTimeout(() => {
+      if (!state.motionOn || !inView || document.hidden) return;
+      cycleIdx = (cycleIdx + 1) % items.length;
+      buildParticlesForTarget(cycleIdx, false);
+      scheduleNext();
+    }, 3200 + morphDuration);
+  }
+
+  function startLoop() {
+    if (!state.motionOn) {
+      drawStatic(cycleIdx);
+      return;
+    }
+    if (!running) {
+      running = true;
+      motion.add(step);
+    }
+    scheduleNext();
+  }
+
+  function stopLoop() {
+    window.clearTimeout(holdTimer);
+    if (running) {
+      running = false;
+      motion.remove(step);
+    }
+  }
+
+  sizeCanvas();
+  if (state.motionOn) {
+    buildParticlesForTarget(0, true);
+    startLoop();
+  } else {
+    drawStatic(0);
+  }
+
+  canvas.addEventListener('click', () => {
+    cycleIdx = (cycleIdx + 1) % items.length;
+    if (!state.motionOn) {
+      drawStatic(cycleIdx);
+      return;
+    }
+    buildParticlesForTarget(cycleIdx, false);
+    scheduleNext();
+  });
+
+  if (window.matchMedia && window.matchMedia('(pointer: fine)').matches) {
+    canvas.addEventListener(
+      'pointermove',
+      (e) => {
+        const r = canvas.getBoundingClientRect();
+        pointerX = e.clientX - r.left;
+        pointerY = e.clientY - r.top;
+      },
+      { passive: true }
+    );
+    canvas.addEventListener('pointerleave', () => {
+      pointerX = -9999;
+      pointerY = -9999;
+    });
+  }
+
+  const io = new IntersectionObserver(
+    (entries) => {
+      for (const entry of entries) {
+        inView = entry.intersectionRatio >= 0.1;
+        if (inView && state.motionOn) startLoop();
+        else stopLoop();
+      }
+    },
+    { threshold: [0, 0.1] }
+  );
+  io.observe(canvas);
+
+  let rTimer = 0;
+  const ro = new ResizeObserver(() => {
+    window.clearTimeout(rTimer);
+    rTimer = window.setTimeout(() => {
+      const wasMob = isMobile;
+      sizeCanvas();
+      if (!state.motionOn) drawStatic(cycleIdx);
+      else if (wasMob !== isMobile) buildParticlesForTarget(cycleIdx, false);
+    }, 150);
+  });
+  ro.observe(canvas);
+
+  const onMotionChange = () => {
+    if (state.motionOn) {
+      cycleIdx = 0;
+      buildParticlesForTarget(0, true);
+      startLoop();
+    } else {
+      stopLoop();
+      drawStatic(0);
+    }
+  };
+  window.addEventListener('kroon:motionchange', onMotionChange);
+
+  state.routeCleanup.push(() => {
+    stopLoop();
+    io.disconnect();
+    ro.disconnect();
+    window.clearTimeout(rTimer);
+    window.removeEventListener('kroon:motionchange', onMotionChange);
+  });
+}
+
+// L4 Discipline Panels (Interactive Pixel Weaves)
+function initDisciplinePanels(): void {
+  const grid = document.getElementById('tracks-grid')!;
+
+  const weavePlus = (x: number, y: number, phase: number) => {
+    const px = (x + phase) % 6;
+    const py = (y + phase) % 6;
+    const inA = (px === 1 && py <= 2) || (py === 1 && px <= 2);
+    const inB = (px === 4 && py >= 3) || (py === 4 && px >= 3);
+    return inA || inB ? 1 : 0;
+  };
+  const weaveCross = (x: number, y: number, phase: number) => {
+    const px = (x + phase) % 4;
+    const py = (y + phase) % 4;
+    return px === 1 || py === 1 ? 1 : 0;
+  };
+  const weaveTartan = (x: number, y: number, phase: number) => {
+    const px = (x + phase) % 4;
+    const py = (y + phase) % 4;
+    return (px < 2 !== py < 2 || (px === 1 && py === 1)) ? 1 : 0;
+  };
+  const weaveBasket = (x: number, y: number, phase: number) => {
+    const px = (x + phase) % 4;
+    const py = (y + phase) % 4;
+    const block = (Math.floor((x + phase) / 4) + Math.floor((y + phase) / 4)) % 2 === 0;
+    return block ? (py % 2 === 0 ? 1 : 0) : px % 2 === 0 ? 1 : 0;
+  };
+
+  const PANEL_STYLES: Record<
+    Discipline['id'],
+    { colA: string; colB: string; band: string; weave: (x: number, y: number, p: number) => number }
+  > = {
+    systems: { colA: '#2E5FCE', colB: '#3b6fe8', band: '#2E5FCE', weave: weavePlus },
+    graphics: { colA: '#18B47E', colB: '#2E5FCE', band: '#18B47E', weave: weaveCross },
+    product: { colA: '#F5B700', colB: '#FF5A36', band: '#F5B700', weave: weaveBasket },
+    performance: { colA: '#A98BF7', colB: '#2E5FCE', band: '#A98BF7', weave: weaveTartan },
+  };
+
+  grid.innerHTML = DISCIPLINES.map((t) => {
+    const count = PROJECTS.filter((p) => p.track === t.id).length;
+    const aria = `${t.label}: ${count} featured projects. View ${t.label} case studies.`;
+    const style = PANEL_STYLES[t.id];
+    return `
+      <div class="track-fig">
+        <button type="button" class="track-panel-btn" data-track="${esc(t.id)}" style="--track-band:${style.band}" aria-label="${esc(aria)}">
+          <svg class="track-panel-svg" viewBox="0 0 80 72" shape-rendering="crispEdges" aria-hidden="true"></svg>
+          <div class="track-card-body">
+            <div>
+              <p class="track-card-title">${esc(t.label)}</p>
+              <p class="t-small track-card-desc">${esc(t.desc)}</p>
+            </div>
+            <div class="track-card-foot">
+              <span class="t-micro">${count} case ${count === 1 ? 'study' : 'studies'}</span>
+              <svg class="track-card-arrow" width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true">
+                <path d="M2 12L12 2M12 2H4M12 2V10" stroke="currentColor" stroke-width="1.6" stroke-linecap="square"/>
+              </svg>
+            </div>
+          </div>
+        </button>
+      </div>
+    `;
+  }).join('');
+
+  const controllers: Array<() => void> = [];
+  DISCIPLINES.forEach((t) => {
+    const btn = grid.querySelector(`.track-panel-btn[data-track="${t.id}"]`) as HTMLButtonElement;
+    const svg = btn.querySelector('.track-panel-svg')!;
+    const panel = PANEL_STYLES[t.id];
+    const cell = 4;
+    const cols = 20;
+    const rows = 18;
+    let busy = false;
+    let animTimer = 0;
+
+    function drawGrid(phase: number) {
+      let out = `<rect x="0" y="0" width="${cols * cell}" height="${rows * cell}" fill="${panel.colA}"/>`;
+      for (let y = 0; y < rows; y++) {
+        for (let x = 0; x < cols; x++) {
+          if (panel.weave(x, y, phase) === 1) {
+            out += `<rect x="${x * cell}" y="${y * cell}" width="${cell}" height="${cell}" fill="${panel.colB}"/>`;
+          }
+        }
+      }
+      svg.innerHTML = out;
+    }
+
+    drawGrid(0);
+
+    function play() {
+      if (!state.motionOn || busy) return;
+      busy = true;
+      let step = 0;
+      animTimer = window.setInterval(() => {
+        step++;
+        drawGrid(step % 6);
+        if (step >= 6) {
+          window.clearInterval(animTimer);
+          drawGrid(0);
+          busy = false;
+        }
+      }, 90);
+    }
+
+    btn.addEventListener('mouseenter', play);
+    btn.addEventListener('focus', play);
+    btn.addEventListener('click', () => {
+      state.projectsFilter.tracks = [t.id];
+      window.location.hash = '#/projects';
+    });
+
+    const io = new IntersectionObserver(
+      (entries) => {
+        for (const entry of entries) {
+          if (entry.isIntersecting) {
+            io.disconnect();
+            play();
+          }
+        }
+      },
+      { threshold: 0.4 }
+    );
+    io.observe(btn);
+
+    state.routeCleanup.push(() => {
+      io.disconnect();
+      window.clearInterval(animTimer);
+    });
+
+    controllers.push(play);
+  });
+
+  const idleTimer = window.setInterval(() => {
+    if (!state.motionOn || document.hidden) return;
+    const fn = controllers[Math.floor(Math.random() * controllers.length)];
+    if (fn) fn();
+  }, 6000);
+  state.routeCleanup.push(() => window.clearInterval(idleTimer));
+}
+
+// L6 Selected Projects Preview
+function initProjectsPreview(): void {
+  const grid = document.getElementById('speakers-preview-grid')!;
+  grid.innerHTML = PROJECTS.map((pr) => `
+      <figure class="speaker-card">
+        <a class="speaker-card-link" href="#/projects/${esc(pr.id)}">
+          <div class="speaker-card-media">
+            <img class="speaker-card-img" src="${esc(pr.image || `/projects/${pr.id}.webp`)}" alt="${esc(pr.name)} screenshot" loading="lazy" />
+          </div>
+          <figcaption class="speaker-card-figcap">
+            <div class="speaker-card-head">
+              <h3 class="t-lead speaker-card-name">${esc(pr.name)}</h3>
+              <p class="t-micro speaker-card-role">${esc(pr.client)}</p>
+            </div>
+            <p class="t-small speaker-card-talk">${esc(pr.summary)}</p>
+          </figcaption>
+        </a>
+      </figure>
+    `).join('');
+}
+
+// Route 2: Experience & Career Timeline (#/timeline)
+function renderTimeline(main: HTMLElement): void {
+  document.title = 'Experience' + COPY.siteTitleSuffix;
+  main.innerHTML = `
+    <section class="sub-sec" data-surface="paper">
+      <div class="grid">
+        <p class="col-1-3 t-micro">Experience</p>
+        <div class="col-5-12">
+          <h1 class="t-h1" tabindex="-1">${esc(COPY.scheduleTitle)}</h1>
+          <p class="t-body" style="margin-top:16px;">${esc(COPY.scheduleLead)}</p>
+        </div>
+      </div>
+      <div class="schedule-controls" id="sched-controls">
+        <div class="grid">
+          <div class="col-full schedule-controls-inner">
+            <div class="day-tabs" role="tablist" aria-label="Career eras" id="sched-day-tabs">
+              ${ERAS.map(
+                (d) => `
+                <button type="button" class="day-tab t-small" role="tab" id="tab-${esc(d.id)}" aria-selected="${state.timelineFilter.era === d.id ? 'true' : 'false'}" tabindex="${state.timelineFilter.era === d.id ? '0' : '-1'}" data-era="${esc(d.id)}">${esc(d.shortLabel)}</button>
+              `
+              ).join('')}
+            </div>
+            <div class="track-toggles-wrap" id="sched-track-toggles">
+              ${DISCIPLINES.map((t) => {
+                const pressed = state.timelineFilter.tracks.includes(t.id);
+                return `<button type="button" class="chip-toggle t-small" data-track="${esc(t.id)}" aria-pressed="${pressed ? 'true' : 'false'}">
+                  <svg width="10" height="10" viewBox="0 0 10 10" shape-rendering="crispEdges" aria-hidden="true"><rect x="0" y="0" width="10" height="10" fill="${TOKENS.ink}"/><rect x="1" y="1" width="8" height="8" fill="${t.chipBg}"/></svg>
+                  ${esc(t.label)}
+                </button>`;
+              }).join('')}
+            </div>
+            <button type="button" class="chip-toggle t-small" id="sched-agenda-btn" aria-pressed="${state.timelineFilter.savedOnly ? 'true' : 'false'}">Review list (${state.savedIds.length})</button>
+            <div class="seg-group" role="group" aria-label="Experience view">
+              <button type="button" class="chip-toggle t-small" id="view-timeline-btn" aria-pressed="${state.timelineFilter.view === 'timeline' ? 'true' : 'false'}">Timeline</button>
+              <button type="button" class="chip-toggle t-small" id="view-table-btn" aria-pressed="${state.timelineFilter.view === 'table' ? 'true' : 'false'}">Table</button>
+            </div>
+            <button type="button" class="btn-text t-micro u-anim" id="sched-md-btn">Download brief (.md)</button>
+          </div>
+        </div>
+      </div>
+      <div class="grid">
+        <p class="col-full t-micro schedule-live-count" id="sched-count" aria-live="polite"></p>
+        <div class="col-full" id="sched-body"></div>
+      </div>
+    </section>
+  `;
+
+  const updateScrollPad = () => {
+    const hh = window.innerWidth >= 768 ? 64 : 56;
+    const ctrl = document.getElementById('sched-controls');
+    const ch = ctrl ? ctrl.getBoundingClientRect().height : 60;
+    document.documentElement.style.scrollPaddingTop = `${Math.round(hh + ch + 16)}px`;
+  };
+  updateScrollPad();
+  window.addEventListener('resize', updateScrollPad, { passive: true });
+  state.routeCleanup.push(() => {
+    window.removeEventListener('resize', updateScrollPad);
+    document.documentElement.style.scrollPaddingTop = '80px';
+  });
+
+  const eraTabs = Array.from(document.querySelectorAll<HTMLButtonElement>('#sched-day-tabs .day-tab'));
+  const trackBtns = Array.from(document.querySelectorAll<HTMLButtonElement>('#sched-track-toggles .chip-toggle'));
+  const savedBtn = document.getElementById('sched-agenda-btn') as HTMLButtonElement;
+  const tlBtn = document.getElementById('view-timeline-btn')!;
+  const tblBtn = document.getElementById('view-table-btn')!;
+  const mdBtn = document.getElementById('sched-md-btn')!;
+  const countEl = document.getElementById('sched-count')!;
+  const bodyEl = document.getElementById('sched-body')!;
+
+  function getFilteredEntries() {
+    const eraAll = archiveByEra(state.timelineFilter.era);
+    const filtered = eraAll.filter((s) => {
+      if (state.timelineFilter.tracks.length > 0 && !state.timelineFilter.tracks.includes(s.track))
+        return false;
+      if (state.timelineFilter.savedOnly && !state.savedIds.includes(s.id)) return false;
+      return true;
+    });
+    return { eraAll, filtered: filtered.sort((a, b) => timeToMin(a.period) - timeToMin(b.period)) };
+  }
+
+  function renderTimelineBody() {
+    const eraObj = eraById(state.timelineFilter.era);
+    const { eraAll, filtered } = getFilteredEntries();
+    savedBtn.textContent = `Review list (${state.savedIds.length})`;
+    countEl.textContent = `${filtered.length} of ${eraAll.length} milestones shown · ${eraObj.role}, ${eraObj.org}`;
+
+    if (filtered.length === 0) {
+      const msg =
+        state.timelineFilter.savedOnly && state.savedIds.length === 0
+          ? 'Your review list is empty. Press + on any milestone to bookmark it.'
+          : 'No milestones in this era match the selected filters.';
+      bodyEl.innerHTML = `
+        <div class="schedule-empty">
+          <p class="t-lead">${esc(msg)}</p>
+          <button type="button" class="btn-text t-small u-anim" id="sched-clear-btn">Clear filters</button>
+        </div>
+      `;
+      document.getElementById('sched-clear-btn')!.addEventListener('click', () => {
+        state.timelineFilter.tracks = [];
+        state.timelineFilter.savedOnly = false;
+        storageSet('kroon.timeline', state.timelineFilter);
+        trackBtns.forEach((b) => b.setAttribute('aria-pressed', 'false'));
+        savedBtn.setAttribute('aria-pressed', 'false');
+        renderTimelineBody();
+      });
+      return;
+    }
+
+    if (state.timelineFilter.view === 'table') {
+      bodyEl.innerHTML = `
+        <table class="data-table responsive-table">
+          <caption class="t-micro">${esc(eraObj.fullLabel)}, ${filtered.length} milestones</caption>
+          <thead>
+            <tr>
+              <th class="t-micro">Focus</th>
+              <th class="t-micro">Type</th>
+              <th class="t-micro">Milestone</th>
+              <th class="t-micro">Outcome</th>
+              <th class="t-micro">Discipline</th>
+              <th class="t-micro">Save</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${filtered
+              .map((s) => {
+                const r = zoneById(s.space);
+                const tr = trackById(s.track);
+                const added = state.savedIds.includes(s.id);
+                return `<tr>
+                <td data-label="Focus" class="t-small">${esc(r.name)}</td>
+                <td data-label="Type" class="t-small">${esc(s.kind)}</td>
+                <td data-label="Milestone" class="t-small fw-600"><a class="u-anim" href="#/archive/${esc(s.id)}">${esc(s.title)}</a></td>
+                <td data-label="Outcome" class="t-small tnum">${esc(s.metric)}</td>
+                <td data-label="Discipline" class="t-small"><span class="track-meta"><span class="track-swatch" style="background:${tr.chipBg}"></span>${esc(tr.label)}</span></td>
+                <td data-label="Save" class="t-small">
+                  <button type="button" class="tl-agenda-btn" data-ag="${esc(s.id)}" aria-pressed="${added ? 'true' : 'false'}" aria-label="${added ? 'Remove' : 'Bookmark'} ${esc(s.title)}">${svgPixelIcon(added ? 'check' : 'plus', 14)}</button>
+                </td>
+              </tr>`;
+              })
+              .join('')}
+          </tbody>
+        </table>
+      `;
+    } else if (window.innerWidth < 768) {
+      bodyEl.innerHTML = `<div class="schedule-mobile-list">
+        ${filtered
+          .map((s) => {
+            const r = zoneById(s.space);
+            const added = state.savedIds.includes(s.id);
+            return `<article class="tl-session${added ? ' is-added' : ''}" data-track="${esc(s.track)}" data-sid="${esc(s.id)}">
+            <div class="tl-session-top">
+              <div>
+                <div class="t-micro tnum">${esc(s.kind)} · ${esc(s.metric)} · ${esc(r.name)}</div>
+                <h2 class="t-small fw-600" style="margin-top:4px;">${esc(s.title)}</h2>
+              </div>
+              <button type="button" class="tl-agenda-btn" data-ag="${esc(s.id)}" aria-pressed="${added ? 'true' : 'false'}" aria-label="${added ? 'Remove' : 'Bookmark'} ${esc(s.title)}">${svgPixelIcon(added ? 'check' : 'plus', 14)}</button>
+            </div>
+          </article>`;
+          })
+          .join('')}
+      </div>`;
+    } else {
+      let hourMarks = '';
+      for (let h = 9; h <= 17; h++) {
+        const row = (h - 9) * 4 + 2;
+        hourMarks += `<div class="tl-hour-line" style="grid-row:${row};"></div>`;
+        hourMarks += `<div class="tl-hour-label t-micro tnum" style="grid-row:${row} / ${row + 2};">${esc(eraObj.shortLabel)}</div>`;
+      }
+
+      const sessBlocks = filtered
+        .map((s) => {
+          const rStart = Math.round((timeToMin(s.period) - 540) / 15) + 2;
+          const rEnd = Math.round((timeToMin(s.endPeriod) - 540) / 15) + 2;
+          const col = s.space === 'systems-desk' ? 2 : 3;
+          const added = state.savedIds.includes(s.id);
+          const projNames = s.projects
+            .map((pid) => projectById(pid)?.name)
+            .filter(Boolean)
+            .join(', ');
+          return `<article class="tl-session${added ? ' is-added' : ''}" data-track="${esc(s.track)}" data-sid="${esc(s.id)}" style="grid-column:${col};grid-row:${rStart} / ${rEnd};">
+          <div class="tl-session-top">
+            <div>
+              <div class="t-micro tnum">${esc(s.kind)} · ${esc(s.metric)}</div>
+              <h2 class="t-small fw-600" style="margin-top:2px;">${esc(s.title)}</h2>
+              <div class="t-micro" style="margin-top:4px;">${esc(projNames)}</div>
+            </div>
+            <button type="button" class="tl-agenda-btn" data-ag="${esc(s.id)}" aria-pressed="${added ? 'true' : 'false'}" aria-label="${added ? 'Remove' : 'Bookmark'} ${esc(s.title)}">${svgPixelIcon(added ? 'check' : 'plus', 14)}</button>
+          </div>
+        </article>`;
+        })
+        .join('');
+
+      bodyEl.innerHTML = `
+        <div class="timeline-grid">
+          <div class="tl-room-head t-micro" style="grid-column:1;">Era</div>
+          <div class="tl-room-head t-micro" style="grid-column:2;">Systems &amp; Architecture</div>
+          <div class="tl-room-head t-micro" style="grid-column:3;">Graphics, Tools &amp; Essays</div>
+          ${hourMarks}
+          ${sessBlocks}
+        </div>
+      `;
+    }
+
+    bodyEl.querySelectorAll<HTMLButtonElement>('[data-ag]').forEach((btn) => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        toggleSaved(btn.dataset.ag!);
+        renderTimelineBody();
+      });
+    });
+    bodyEl.querySelectorAll<HTMLElement>('.tl-session[data-sid]').forEach((card) => {
+      card.addEventListener('click', (e) => {
+        if ((e.target as HTMLElement).closest('[data-ag]')) return;
+        window.location.hash = `#/archive/${card.dataset.sid}`;
+      });
+    });
+  }
+
+  function selectEra(eraId: string, moveFocus: boolean) {
+    state.timelineFilter.era = eraId;
+    storageSet('kroon.timeline', state.timelineFilter);
+    eraTabs.forEach((t) => {
+      const active = t.dataset.era === eraId;
+      t.setAttribute('aria-selected', active ? 'true' : 'false');
+      t.setAttribute('tabindex', active ? '0' : '-1');
+      if (active && moveFocus) t.focus();
+    });
+    renderTimelineBody();
+  }
+
+  eraTabs.forEach((tab, idx) => {
+    tab.addEventListener('click', () => selectEra(tab.dataset.era!, false));
+    tab.addEventListener('keydown', (e) => {
+      let nextIdx = -1;
+      if (e.key === 'ArrowRight') nextIdx = (idx + 1) % eraTabs.length;
+      else if (e.key === 'ArrowLeft') nextIdx = (idx - 1 + eraTabs.length) % eraTabs.length;
+      else if (e.key === 'Home') nextIdx = 0;
+      else if (e.key === 'End') nextIdx = eraTabs.length - 1;
+      if (nextIdx >= 0) {
+        e.preventDefault();
+        selectEra(eraTabs[nextIdx].dataset.era!, true);
+      }
+    });
+  });
+
+  trackBtns.forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const tid = btn.dataset.track!;
+      const i = state.timelineFilter.tracks.indexOf(tid);
+      if (i === -1) state.timelineFilter.tracks.push(tid);
+      else state.timelineFilter.tracks.splice(i, 1);
+      btn.setAttribute('aria-pressed', i === -1 ? 'true' : 'false');
+      storageSet('kroon.timeline', state.timelineFilter);
+      renderTimelineBody();
+    });
+  });
+
+  savedBtn.addEventListener('click', () => {
+    state.timelineFilter.savedOnly = !state.timelineFilter.savedOnly;
+    savedBtn.setAttribute('aria-pressed', state.timelineFilter.savedOnly ? 'true' : 'false');
+    storageSet('kroon.timeline', state.timelineFilter);
+    renderTimelineBody();
+  });
+
+  const setView = (v: 'timeline' | 'table') => {
+    state.timelineFilter.view = v;
+    tlBtn.setAttribute('aria-pressed', v === 'timeline' ? 'true' : 'false');
+    tblBtn.setAttribute('aria-pressed', v === 'table' ? 'true' : 'false');
+    storageSet('kroon.timeline', state.timelineFilter);
+    renderTimelineBody();
+  };
+  tlBtn.addEventListener('click', () => setView('timeline'));
+  tblBtn.addEventListener('click', () => setView('table'));
+
+  mdBtn.addEventListener('click', () => {
+    const exportEntries =
+      state.savedIds.length > 0
+        ? state.savedIds.map((id) => archiveById(id)).filter((x): x is ArchiveEntry => Boolean(x))
+        : getFilteredEntries().filtered;
+    const lines = [
+      `# Akash Negi — Selected Portfolio Brief`,
+      `Role: ${META.role}`,
+      `Contact: ${META.email}`,
+      '',
+      ...exportEntries.map(
+        (e) =>
+          `## ${e.title}\n- Kind: ${e.kind}\n- Discipline: ${trackById(e.track).label}\n- Impact: ${e.metric}\n- Summary: ${e.abstract}\n`
+      ),
+    ];
+    const blob = new Blob([lines.join('\n')], { type: 'text/markdown;charset=utf-8' });
+    const blobUrl = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = blobUrl;
+    a.download = 'akash-negi-brief.md';
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    window.setTimeout(() => URL.revokeObjectURL(blobUrl), 1000);
+  });
+
+  const onResize = () => renderTimelineBody();
+  window.addEventListener('resize', onResize, { passive: true });
+  state.routeCleanup.push(() => window.removeEventListener('resize', onResize));
+
+  renderTimelineBody();
+}
+
+// Route 3: Projects Index (#/projects)
+function renderProjects(main: HTMLElement): void {
+  document.title = 'Work' + COPY.siteTitleSuffix;
+  main.innerHTML = `
+    <section class="sub-sec" data-surface="sodium">
+      <div class="grid">
+        <p class="col-1-3 t-micro">Selected work</p>
+        <div class="col-5-12">
+          <h1 class="t-h1" tabindex="-1">${esc(COPY.speakersTitle)}</h1>
+          <p class="t-body" style="margin-top:16px;">${esc(COPY.speakersLeadPage)}</p>
+          <div style="margin-top:24px;display:flex;flex-wrap:wrap;gap:12px;align-items:center;">
+            <div class="track-toggles-wrap" id="spk-track-toggles">
+              ${DISCIPLINES.map((t) => {
+                const pressed = state.projectsFilter.tracks.includes(t.id);
+                return `<button type="button" class="chip-toggle t-small" data-track="${esc(t.id)}" aria-pressed="${pressed ? 'true' : 'false'}">
+                  <svg width="10" height="10" viewBox="0 0 10 10" shape-rendering="crispEdges" aria-hidden="true"><rect x="0" y="0" width="10" height="10" fill="${TOKENS.ink}"/><rect x="1" y="1" width="8" height="8" fill="${t.chipBg}"/></svg>
+                  ${esc(t.label)}
+                </button>`;
+              }).join('')}
+            </div>
+            <div class="seg-group" role="group" aria-label="Sort case studies">
+              <button type="button" class="chip-toggle t-small" id="spk-sort-feat" aria-pressed="${state.projectsFilter.sort === 'featured' ? 'true' : 'false'}">Featured</button>
+              <button type="button" class="chip-toggle t-small" id="spk-sort-az" aria-pressed="${state.projectsFilter.sort === 'az' ? 'true' : 'false'}">A–Z</button>
+              <button type="button" class="chip-toggle t-small" id="spk-sort-year" aria-pressed="${state.projectsFilter.sort === 'year' ? 'true' : 'false'}">Newest</button>
+            </div>
+          </div>
+        </div>
+        <div class="col-full" id="spk-grid-wrap"></div>
+      </div>
+    </section>
+  `;
+
+  const gridWrap = document.getElementById('spk-grid-wrap')!;
+  const trackBtns = Array.from(document.querySelectorAll<HTMLButtonElement>('#spk-track-toggles .chip-toggle'));
+  const featBtn = document.getElementById('spk-sort-feat')!;
+  const azBtn = document.getElementById('spk-sort-az')!;
+  const yearBtn = document.getElementById('spk-sort-year')!;
+
+  function drawList(skipFade: boolean) {
+    let list = PROJECTS.filter(
+      (pr) =>
+        state.projectsFilter.tracks.length === 0 || state.projectsFilter.tracks.includes(pr.track)
+    );
+    if (state.projectsFilter.sort === 'az') {
+      list = list.slice().sort((a, b) => a.name.localeCompare(b.name));
+    } else if (state.projectsFilter.sort === 'year') {
+      list = list.slice().sort((a, b) => Number(b.year) - Number(a.year));
+    }
+
+    if (list.length === 0) {
+      gridWrap.innerHTML = `<p class="t-lead" style="margin-top:48px;">No case studies in this discipline.</p>`;
+      return;
+    }
+
+    const doRender = () => {
+      gridWrap.innerHTML = `<div class="speakers-index-grid">
+        ${list
+          .map((pr) => {
+            const tr = trackById(pr.track);
+            return `<figure class="speaker-card" data-spcard="${esc(pr.id)}">
+            <a class="speaker-card-link" href="#/projects/${esc(pr.id)}">
+              <div class="speaker-card-media">
+                <img class="speaker-card-img" src="${esc(pr.image || `/projects/${pr.id}.webp`)}" alt="${esc(pr.name)} screenshot" loading="lazy" />
+              </div>
+            </a>
+            <figcaption class="speaker-card-figcap">
+              <div class="speaker-card-head">
+                <h2 class="t-lead speaker-card-name"><a class="u-anim" href="#/projects/${esc(pr.id)}">${esc(pr.name)}</a></h2>
+                <p class="t-micro speaker-card-role">${esc(pr.client)}</p>
+              </div>
+              <p class="t-micro" style="margin-top:6px;"><span class="track-meta"><span class="track-swatch" style="background:${tr.chipBg}"></span>${esc(tr.label)}</span></p>
+              <p class="t-small" style="margin-top:8px;">${esc(pr.summary)}</p>
+            </figcaption>
+          </figure>`;
+          })
+          .join('')}
+      </div>`;
+
+      list.forEach((pr) => {
+        const canvas = gridWrap.querySelector(`canvas[data-spid="${pr.id}"]`) as HTMLCanvasElement | null;
+        if (canvas) initArtCanvas(canvas, pr, { skipAssemble: !skipFade });
+      });
+    };
+
+    const existing = Array.from(gridWrap.querySelectorAll<HTMLElement>('.speaker-card'));
+    if (!skipFade && state.motionOn && existing.length > 0) {
+      const keepIds = new Set(list.map((s) => s.id));
+      const leaving = existing.filter((el) => !keepIds.has(el.dataset.spcard || ''));
+      if (leaving.length > 0) {
+        leaving.forEach((el) => el.classList.add('is-leaving'));
+        window.setTimeout(doRender, 160);
+        return;
+      }
+    }
+    doRender();
+  }
+
+  trackBtns.forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const tid = btn.dataset.track!;
+      const i = state.projectsFilter.tracks.indexOf(tid);
+      if (i === -1) state.projectsFilter.tracks.push(tid);
+      else state.projectsFilter.tracks.splice(i, 1);
+      btn.setAttribute('aria-pressed', i === -1 ? 'true' : 'false');
+      drawList(false);
+    });
+  });
+
+  const setSort = (sort: AppState['projectsFilter']['sort']) => {
+    state.projectsFilter.sort = sort;
+    featBtn.setAttribute('aria-pressed', sort === 'featured' ? 'true' : 'false');
+    azBtn.setAttribute('aria-pressed', sort === 'az' ? 'true' : 'false');
+    yearBtn.setAttribute('aria-pressed', sort === 'year' ? 'true' : 'false');
+    drawList(false);
+  };
+  featBtn.addEventListener('click', () => setSort('featured'));
+  azBtn.addEventListener('click', () => setSort('az'));
+  yearBtn.addEventListener('click', () => setSort('year'));
+
+  drawList(true);
+}
+
+// Route 4: Project Detail (#/projects/<id>)
+function renderProjectDetail(main: HTMLElement, id: string): void {
+  const idx = PROJECTS.findIndex((s) => s.id === id);
+  if (idx === -1) {
+    renderNotFound(main);
+    return;
+  }
+  const pr = PROJECTS[idx];
+  const prevPr = PROJECTS[(idx - 1 + PROJECTS.length) % PROJECTS.length];
+  const nextPr = PROJECTS[(idx + 1) % PROJECTS.length];
+  const tr = trackById(pr.track);
+  const related = archiveByProject(pr.id);
+  const resLabels = ['4 × 4', '8 × 8', '16 × 16', '32 × 32'];
+  const resSizes = [8, 4, 2, 1];
+
+  document.title = pr.name + COPY.siteTitleSuffix;
+  main.innerHTML = `
+    <section class="sub-sec" data-surface="paper">
+      <div class="grid">
+        <div class="col-1-5">
+          <figure>
+            <div class="speaker-card-media" style="margin-bottom: 16px;">
+              <img class="speaker-card-img" src="${esc(pr.image || `/projects/${pr.id}.webp`)}" alt="${esc(pr.name)} screenshot" />
+            </div>
+            <canvas class="portrait-canvas" id="detail-portrait" role="img" aria-label="Pixel emblem for ${esc(pr.name)}"></canvas>
+            <div class="scrubber-wrap">
+              <div class="scrubber-head">
+                <label class="t-micro" for="res-scrubber">Grid resolution</label>
+                <output class="t-micro tnum" id="res-output" for="res-scrubber">32 × 32</output>
+              </div>
+              <input class="scrubber-input" type="range" id="res-scrubber" min="0" max="3" step="1" value="3" aria-valuetext="32 × 32">
+            </div>
+            <figcaption class="t-micro" style="margin-top:8px;">Scrub to pool this 32 × 32 emblem down to a 4 × 4 grid.</figcaption>
+          </figure>
+        </div>
+        <div class="col-7-12">
+          <p class="t-micro">Case study</p>
+          <h1 class="t-h1" tabindex="-1" style="margin-top:8px;">${esc(pr.name)}</h1>
+          <p class="t-lead" style="margin-top:16px;">${esc(pr.outcome)}</p>
+          <p class="t-small" style="margin-top:10px;">${esc(pr.client)} · ${esc(pr.city)} · ${esc(pr.year)} · <span class="track-meta"><span class="track-swatch" style="background:${tr.chipBg}"></span>${esc(tr.label)}</span></p>
+          <p class="t-body" style="margin-top:24px;">${esc(pr.summary)}</p>
+          <p class="t-micro" style="margin-top:20px;">Stack: ${esc(pr.stack.join(' · '))}</p>
+
+          <h2 class="t-micro" style="margin-top:48px;">Deliverables &amp; notes</h2>
+          <div class="speaker-sessions-list" id="sp-sessions-list">
+            ${related
+              .map((s) => {
+                const era = eraById(s.era);
+                const added = state.savedIds.includes(s.id);
+                return `<div class="speaker-session-item">
+                <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;">
+                  <div>
+                    <p class="t-micro tnum">${esc(era.years)} · ${esc(s.kind)} · ${esc(s.metric)}</p>
+                    <h3 class="t-small fw-600" style="margin-top:4px;"><a class="u-anim" href="#/archive/${esc(s.id)}">${esc(s.title)}</a></h3>
+                  </div>
+                  <button type="button" class="chip-toggle t-micro" data-ag="${esc(s.id)}" aria-pressed="${added ? 'true' : 'false'}">${added ? 'Saved' : 'Save to brief'}</button>
+                </div>
+                <p class="t-body">${esc(s.abstract)}</p>
+              </div>`;
+              })
+              .join('')}
+          </div>
+
+          <div class="speaker-prev-next">
+            <a class="btn-text t-small u-anim" href="#/projects/${esc(prevPr.id)}">Previous: ${esc(prevPr.name)}</a>
+            <a class="btn-text t-small u-anim" href="#/projects/${esc(nextPr.id)}">Next: ${esc(nextPr.name)}</a>
+          </div>
+        </div>
+      </div>
+    </section>
+  `;
+
+  const ctrl = initArtCanvas(document.getElementById('detail-portrait') as HTMLCanvasElement, pr, {});
+  const scrubber = document.getElementById('res-scrubber') as HTMLInputElement;
+  const out = document.getElementById('res-output')!;
+  scrubber.addEventListener('input', () => {
+    const v = Number(scrubber.value);
+    const label = resLabels[v] || '32 × 32';
+    out.textContent = label;
+    scrubber.setAttribute('aria-valuetext', label);
+    ctrl.setBlockSize(resSizes[v] || 1);
+  });
+
+  document.getElementById('sp-sessions-list')!.addEventListener('click', (e) => {
+    const btn = (e.target as HTMLElement).closest<HTMLButtonElement>('[data-ag]');
+    if (!btn) return;
+    toggleSaved(btn.dataset.ag!);
+    const added = state.savedIds.includes(btn.dataset.ag!);
+    btn.setAttribute('aria-pressed', added ? 'true' : 'false');
+    btn.textContent = added ? 'Saved' : 'Save to brief';
+  });
+}
+
+// Route 5: Archive Index (#/archive and #/archive/<id>)
+function renderArchive(main: HTMLElement, entryId?: string): void {
+  document.title = 'Archive' + COPY.siteTitleSuffix;
+  if (entryId && archiveById(entryId)) {
+    state.archiveFilter.openId = entryId;
+  }
+
+  main.innerHTML = `
+    <section class="sub-sec" data-surface="paper">
+      <div class="grid">
+        <p class="col-1-3 t-micro">Archive</p>
+        <div class="col-5-12">
+          <h1 class="t-h1" tabindex="-1">${esc(COPY.talksTitle)}</h1>
+          <p class="t-body" style="margin-top:16px;">${esc(COPY.talksLead)}</p>
+        </div>
+        <div class="col-full talks-controls">
+          <div class="talks-search-row">
+            <div class="field-group">
+              <label class="t-micro" for="talks-search">Search work &amp; notes</label>
+              <input class="text-input" type="search" id="talks-search" value="${esc(state.archiveFilter.query)}" placeholder="tokens, WebGL, audit, e-paper">
+            </div>
+            <div class="track-toggles-wrap" id="talks-type-toggles">
+              ${(['System', 'Tool', 'Product', 'Essay'] as const).map((tp) => {
+                const pressed = state.archiveFilter.kinds.includes(tp);
+                return `<button type="button" class="chip-toggle t-small" data-kind="${tp}" aria-pressed="${pressed ? 'true' : 'false'}">${tp}</button>`;
+              }).join('')}
+            </div>
+            <div class="track-toggles-wrap" id="talks-track-toggles">
+              ${DISCIPLINES.map((t) => {
+                const pressed = state.archiveFilter.tracks.includes(t.id);
+                return `<button type="button" class="chip-toggle t-small" data-track="${esc(t.id)}" aria-pressed="${pressed ? 'true' : 'false'}">
+                  <svg width="10" height="10" viewBox="0 0 10 10" shape-rendering="crispEdges" aria-hidden="true"><rect x="0" y="0" width="10" height="10" fill="${TOKENS.ink}"/><rect x="1" y="1" width="8" height="8" fill="${t.chipBg}"/></svg>
+                  ${esc(t.label)}
+                </button>`;
+              }).join('')}
+            </div>
+          </div>
+          <p class="t-micro" id="talks-count" aria-live="polite"></p>
+        </div>
+        <div class="col-full" id="talks-table-wrap"></div>
+      </div>
+    </section>
+  `;
+
+  const searchInput = document.getElementById('talks-search') as HTMLInputElement;
+  const kindBtns = Array.from(document.querySelectorAll<HTMLButtonElement>('#talks-type-toggles .chip-toggle'));
+  const trackBtns = Array.from(document.querySelectorAll<HTMLButtonElement>('#talks-track-toggles .chip-toggle'));
+  const countEl = document.getElementById('talks-count')!;
+  const wrap = document.getElementById('talks-table-wrap')!;
+
+  function highlightMatch(text: string, q: string): string {
+    if (!q) return esc(text);
+    const nq = normText(q.trim());
+    if (!nq) return esc(text);
+    const nt = normText(text);
+    const idx = nt.indexOf(nq);
+    if (idx === -1) return esc(text);
+    return (
+      esc(text.slice(0, idx)) +
+      `<mark>${esc(text.slice(idx, idx + q.trim().length))}</mark>` +
+      esc(text.slice(idx + q.trim().length))
+    );
+  }
+
+  function getFiltered() {
+    const q = normText(state.archiveFilter.query.trim());
+    const list = ARCHIVE_ITEMS.filter((s) => {
+      if (state.archiveFilter.kinds.length > 0 && !state.archiveFilter.kinds.includes(s.kind))
+        return false;
+      if (state.archiveFilter.tracks.length > 0 && !state.archiveFilter.tracks.includes(s.track))
+        return false;
+      if (q) {
+        const hay = normText(
+          s.title + ' ' + s.abstract + ' ' + s.metric + ' ' + s.projects.join(' ')
+        );
+        if (!hay.includes(q)) return false;
+      }
+      return true;
+    });
+
+    const col = state.archiveFilter.sortCol;
+    const dir = state.archiveFilter.sortDir === 'asc' ? 1 : -1;
+    list.sort((a, b) => {
+      let va = '';
+      let vb = '';
+      if (col === 'id') {
+        va = a.id;
+        vb = b.id;
+      } else if (col === 'era') {
+        va = eraById(a.era).years;
+        vb = eraById(b.era).years;
+      } else if (col === 'title') {
+        va = a.title;
+        vb = b.title;
+      } else if (col === 'track') {
+        va = trackById(a.track).label;
+        vb = trackById(b.track).label;
+      } else if (col === 'kind') {
+        va = a.kind;
+        vb = b.kind;
+      }
+      return va.localeCompare(vb) * dir;
+    });
+    return list;
+  }
+
+  function renderTable() {
+    const list = getFiltered();
+    countEl.textContent = `${list.length} of ${ARCHIVE_ITEMS.length} entries shown`;
+    const q = state.archiveFilter.query.trim();
+
+    if (list.length === 0) {
+      wrap.innerHTML = `<div class="schedule-empty">
+        <p class="t-lead">No archive entries match this filter.</p>
+        <button type="button" class="btn-text t-small u-anim" id="talks-clear-btn">Clear filters</button>
+      </div>`;
+      document.getElementById('talks-clear-btn')!.addEventListener('click', () => {
+        state.archiveFilter.query = '';
+        state.archiveFilter.kinds = [];
+        state.archiveFilter.tracks = [];
+        searchInput.value = '';
+        kindBtns.forEach((b) => b.setAttribute('aria-pressed', 'false'));
+        trackBtns.forEach((b) => b.setAttribute('aria-pressed', 'false'));
+        renderTable();
+      });
+      return;
+    }
+
+    const sortIcon = (col: AppState['archiveFilter']['sortCol']) => {
+      if (state.archiveFilter.sortCol !== col) return '';
+      return svgPixelIcon(state.archiveFilter.sortDir === 'asc' ? 'tri-up' : 'tri-down', 10);
+    };
+
+    wrap.innerHTML = `
+      <table class="data-table responsive-table talks-table">
+        <caption class="t-micro">${list.length} entries</caption>
+        <thead>
+          <tr>
+            <th class="t-micro" aria-sort="${state.archiveFilter.sortCol === 'id' ? (state.archiveFilter.sortDir === 'asc' ? 'ascending' : 'descending') : 'none'}"><button type="button" class="sort-btn" data-sort="id">ID ${sortIcon('id')}</button></th>
+            <th class="t-micro" aria-sort="${state.archiveFilter.sortCol === 'era' ? (state.archiveFilter.sortDir === 'asc' ? 'ascending' : 'descending') : 'none'}"><button type="button" class="sort-btn" data-sort="era">Era ${sortIcon('era')}</button></th>
+            <th class="t-micro" aria-sort="${state.archiveFilter.sortCol === 'title' ? (state.archiveFilter.sortDir === 'asc' ? 'ascending' : 'descending') : 'none'}"><button type="button" class="sort-btn" data-sort="title">Title ${sortIcon('title')}</button></th>
+            <th class="t-micro">Impact</th>
+            <th class="t-micro" aria-sort="${state.archiveFilter.sortCol === 'track' ? (state.archiveFilter.sortDir === 'asc' ? 'ascending' : 'descending') : 'none'}"><button type="button" class="sort-btn" data-sort="track">Discipline ${sortIcon('track')}</button></th>
+            <th class="t-micro" aria-sort="${state.archiveFilter.sortCol === 'kind' ? (state.archiveFilter.sortDir === 'asc' ? 'ascending' : 'descending') : 'none'}"><button type="button" class="sort-btn" data-sort="kind">Kind ${sortIcon('kind')}</button></th>
+          </tr>
+        </thead>
+        <tbody>
+          ${list
+            .map((s) => {
+              const era = eraById(s.era);
+              const tr = trackById(s.track);
+              const isOpen = state.archiveFilter.openId === s.id;
+              const added = state.savedIds.includes(s.id);
+              const projLinks = s.projects
+                .map((id) => {
+                  const p = projectById(id);
+                  return p ? `<a class="u-anim fw-600" href="#/projects/${esc(p.id)}">${esc(p.name)}</a>` : '';
+                })
+                .filter(Boolean)
+                .join(', ');
+              return `
+              <tr class="talk-row" data-track="${esc(s.track)}" data-sid="${esc(s.id)}">
+                <td data-label="ID" class="t-small tnum">${esc(s.id)}</td>
+                <td data-label="Era" class="t-small tnum">${esc(era.years)}</td>
+                <td data-label="Title" class="t-small fw-600">
+                  <button type="button" class="btn-text" data-expand="${esc(s.id)}" aria-expanded="${isOpen ? 'true' : 'false'}" style="font-weight:600;white-space:normal;">${highlightMatch(s.title, q)}</button>
+                </td>
+                <td data-label="Impact" class="t-small tnum">${esc(s.metric)}</td>
+                <td data-label="Discipline" class="t-small"><span class="track-meta"><span class="track-swatch" style="background:${tr.chipBg}"></span>${esc(tr.label)}</span></td>
+                <td data-label="Kind" class="t-small">${esc(s.kind)}</td>
+              </tr>
+              ${
+                isOpen
+                  ? `
+                <tr class="talk-expand-row" id="talk-exp-${esc(s.id)}">
+                  <td colspan="6">
+                    <p class="t-body">${highlightMatch(s.abstract, q)}</p>
+                    <div style="margin-top:16px;display:flex;flex-wrap:wrap;gap:16px;align-items:center;">
+                      <span class="t-micro">Case study: ${projLinks}</span>
+                      <button type="button" class="chip-toggle t-micro" data-ag="${esc(s.id)}" aria-pressed="${added ? 'true' : 'false'}">${added ? 'Saved in brief' : 'Save to brief'}</button>
+                    </div>
+                  </td>
+                </tr>
+              `
+                  : ''
+              }
+            `;
+            })
+            .join('')}
+        </tbody>
+      </table>
+    `;
+
+    wrap.querySelectorAll<HTMLButtonElement>('[data-sort]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const col = btn.dataset.sort as AppState['archiveFilter']['sortCol'];
+        if (state.archiveFilter.sortCol === col) {
+          state.archiveFilter.sortDir = state.archiveFilter.sortDir === 'asc' ? 'desc' : 'asc';
+        } else {
+          state.archiveFilter.sortCol = col;
+          state.archiveFilter.sortDir = 'asc';
+        }
+        renderTable();
+      });
+    });
+
+    wrap.querySelectorAll<HTMLButtonElement>('[data-expand]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const id = btn.dataset.expand!;
+        state.archiveFilter.openId = state.archiveFilter.openId === id ? null : id;
+        renderTable();
+      });
+    });
+
+    wrap.querySelectorAll<HTMLButtonElement>('[data-ag]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        toggleSaved(btn.dataset.ag!);
+        renderTable();
+      });
+    });
+  }
+
+  searchInput.addEventListener('input', () => {
+    state.archiveFilter.query = searchInput.value;
+    renderTable();
+  });
+
+  kindBtns.forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const tp = btn.dataset.kind!;
+      const i = state.archiveFilter.kinds.indexOf(tp);
+      if (i === -1) state.archiveFilter.kinds.push(tp);
+      else state.archiveFilter.kinds.splice(i, 1);
+      btn.setAttribute('aria-pressed', i === -1 ? 'true' : 'false');
+      renderTable();
+    });
+  });
+
+  trackBtns.forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const tr = btn.dataset.track!;
+      const i = state.archiveFilter.tracks.indexOf(tr);
+      if (i === -1) state.archiveFilter.tracks.push(tr);
+      else state.archiveFilter.tracks.splice(i, 1);
+      btn.setAttribute('aria-pressed', i === -1 ? 'true' : 'false');
+      renderTable();
+    });
+  });
+
+  renderTable();
+
+  if (entryId) {
+    const expRow = document.getElementById(`talk-exp-${entryId}`);
+    if (expRow) expRow.scrollIntoView({ behavior: state.motionOn ? 'smooth' : 'auto', block: 'center' });
+  }
+}
+
+// Route 6: Studio & Workflow (#/studio)
+function renderStudio(main: HTMLElement): void {
+  document.title = 'Studio' + COPY.siteTitleSuffix;
+  main.innerHTML = `
+    <section class="sub-sec" data-surface="paper">
+      <div class="grid">
+        <p class="col-1-3 t-micro">Studio</p>
+        <div class="col-5-12">
+          <h1 class="t-h1" tabindex="-1">${esc(COPY.venueTitle)}</h1>
+          <p class="t-body" style="margin-top:16px;">${esc(COPY.venueLead)}</p>
+        </div>
+      </div>
+
+      <div class="grid venue-grid">
+        <div class="col-1-8">
+          <svg class="venue-svg" id="venue-plan-svg" viewBox="0 0 40 24" shape-rendering="crispEdges" role="img" aria-label="Studio workflow floorplan. Select a station to inspect tools and methods."></svg>
+          <p class="t-micro" style="margin-top:8px;">Interactive studio map: click any zone to inspect tooling and standards.</p>
+        </div>
+        <div class="col-9-12">
+          <div class="venue-room-list" id="venue-room-list">
+            ${STUDIO_ZONES.map(
+              (r) => `
+              <button type="button" class="venue-room-btn t-small" data-room="${esc(r.id)}" aria-pressed="${state.selectedZone === r.id ? 'true' : 'false'}">
+                <span>${esc(r.name)}</span>
+                <span class="t-micro tnum">${esc(r.spec)}</span>
+              </button>
+            `
+            ).join('')}
+          </div>
+          <div class="venue-details" id="venue-details" aria-live="polite"></div>
+        </div>
+      </div>
+
+      <div class="grid venue-info-cols">
+        <div class="col-1-5">
+          <h2 class="t-lead">Collaboration &amp; timezone</h2>
+          <p class="t-body" style="margin-top:12px;">${esc(COPY.venueGettingThere)}</p>
+        </div>
+        <div class="col-7-12">
+          <h2 class="t-lead">Engineering standards</h2>
+          <ul class="access-list t-body">
+            ${COPY.venueAccess.map((a) => `<li>${esc(a)}</li>`).join('')}
+          </ul>
+        </div>
+      </div>
+    </section>
+  `;
+
+  const svg = document.getElementById('venue-plan-svg')!;
+  const roomBtns = Array.from(document.querySelectorAll<HTMLButtonElement>('#venue-room-list .venue-room-btn'));
+  const detailsEl = document.getElementById('venue-details')!;
+
+  function drawPlan() {
+    let inner = `<rect x="0" y="0" width="40" height="24" fill="${TOKENS.paper}" stroke="${TOKENS.ink}" stroke-width="0.25"/>`;
+    STUDIO_PLAN.forEach((rm) => {
+      const sel = state.selectedZone === rm.id;
+      inner += `<g class="venue-room-shape" data-room="${esc(rm.id)}">
+        <rect x="${rm.x}" y="${rm.y}" width="${rm.w}" height="${rm.h}" fill="${rm.fill}" stroke="${TOKENS.ink}" stroke-width="${sel ? '0.6' : '0.2'}"/>
+        <text x="${rm.x + 1}" y="${rm.y + 2.4}" font-family="Inter Tight, sans-serif" font-size="1.4" font-weight="600" fill="${rm.text}">${esc(rm.label)}</text>
+        ${rm.chip ? `<rect x="${rm.x + rm.w - 3.6}" y="${rm.y + 0.6}" width="3" height="1.8" fill="${TOKENS.ink}"/><text x="${rm.x + rm.w - 2.1}" y="${rm.y + 1.9}" text-anchor="middle" font-family="Inter Tight, sans-serif" font-size="1.1" font-weight="600" fill="${TOKENS.sodium}">${esc(rm.chip)}</text>` : ''}
+      </g>`;
+    });
+    svg.innerHTML = inner;
+
+    svg.querySelectorAll<SVGGElement>('.venue-room-shape').forEach((g) => {
+      g.addEventListener('click', () => selectZone(g.dataset.room!));
+    });
+  }
+
+  function renderDetails() {
+    const rm = zoneById(state.selectedZone);
+    detailsEl.innerHTML = `
+      <h3 class="t-lead">${esc(rm.name)} <span class="t-micro">· ${esc(rm.nickname)}</span></h3>
+      <p class="t-micro tnum" style="margin-top:6px;">Focus: ${esc(rm.spec)}</p>
+      <p class="t-small" style="margin-top:10px;">${esc(rm.features.join(' · '))}</p>
+    `;
+  }
+
+  function selectZone(id: string) {
+    state.selectedZone = id;
+    roomBtns.forEach((b) => b.setAttribute('aria-pressed', b.dataset.room === id ? 'true' : 'false'));
+    drawPlan();
+    renderDetails();
+  }
+
+  roomBtns.forEach((btn) => {
+    btn.addEventListener('click', () => selectZone(btn.dataset.room!));
+  });
+
+  drawPlan();
+  renderDetails();
+}
+
+// Route 7: Contact & Scope Estimator (#/contact)
+function renderContact(main: HTMLElement): void {
+  document.title = 'Hire & Scope' + COPY.siteTitleSuffix;
+  main.innerHTML = `
+    <section class="sub-sec" data-surface="sodium">
+      <div class="grid">
+        <p class="col-1-3 t-micro">Availability</p>
+        <div class="col-5-12">
+          <h1 class="t-h1" tabindex="-1">Scope a project</h1>
+          <p class="t-body" style="margin-top:16px;">Select sprint weeks or advisory days to preview 2027 capacity, estimate budget, and send a project brief directly to ${esc(META.email)}.</p>
+        </div>
+
+        <div class="col-full" id="tickets-capacity-wrap"></div>
+
+        <div class="col-full tier-list" id="tier-list">
+          ${ENGAGEMENT_TIERS.map((t) => {
+            const qty = state.bookingQty[t.id];
+            return `
+              <div class="grid tier-row" style="padding-inline:0;" data-tier="${esc(t.id)}">
+                <div class="tier-name-col">
+                  <div class="t-lead">${esc(t.name)}</div>
+                  <div class="t-micro tnum" style="margin-top:4px;">${t.open} of ${t.allocation} ${t.id === 'advisory' ? 'days' : 'weeks'} open in 2027</div>
+                </div>
+                <div class="tier-inc-col t-small">${esc(t.includes)}</div>
+                <div class="tier-price-col t-lead tnum">€${t.price.toLocaleString('en-US')} <span class="t-micro">${esc(t.unit)}</span></div>
+                <div class="tier-step-col">
+                  <div class="stepper">
+                    <button type="button" class="btn-stepper" data-step="-1" data-tier="${esc(t.id)}" aria-label="Decrease ${esc(t.name)} quantity" ${qty <= 0 ? 'aria-disabled="true"' : ''}>${svgPixelIcon('minus', 14)}${qty <= 0 ? svgStrike() : ''}</button>
+                    <span class="stepper-val t-small tnum" data-val="${esc(t.id)}">${qty}</span>
+                    <button type="button" class="btn-stepper" data-step="1" data-tier="${esc(t.id)}" aria-label="Increase ${esc(t.name)} quantity" ${qty >= t.open ? 'aria-disabled="true"' : ''}>${svgPixelIcon('plus', 14)}${qty >= t.open ? svgStrike() : ''}</button>
+                  </div>
+                </div>
+              </div>
+            `;
+          }).join('')}
+        </div>
+
+        <div class="col-full day-select-wrap">
+          <label class="t-micro" for="quarter-select">Preferred window</label>
+          <select class="select-input t-small" id="quarter-select">
+            <option value="">Select quarter</option>
+            <option value="Q1 2027 (Jan–Mar)"${state.bookingQuarter === 'Q1 2027 (Jan–Mar)' ? ' selected' : ''}>Q1 2027 (Jan–Mar)</option>
+            <option value="Q2 2027 (Apr–Jun)"${state.bookingQuarter === 'Q2 2027 (Apr–Jun)' ? ' selected' : ''}>Q2 2027 (Apr–Jun)</option>
+            <option value="Q3 2027 (Jul–Sep)"${state.bookingQuarter === 'Q3 2027 (Jul–Sep)' ? ' selected' : ''}>Q3 2027 (Jul–Sep)</option>
+          </select>
+        </div>
+
+        <form class="col-full contact-form-grid" id="contact-form" novalidate>
+          <div class="field-group">
+            <label class="t-micro" for="contact-name">Your name</label>
+            <input class="text-input" type="text" id="contact-name" value="${esc(state.contactName)}" placeholder="Alex van Dijk" required>
+          </div>
+          <div class="field-group">
+            <label class="t-micro" for="contact-email">Work email</label>
+            <input class="text-input" type="email" id="contact-email" value="${esc(state.contactEmail)}" placeholder="alex@company.com" required>
+          </div>
+          <div class="field-group contact-form-full">
+            <label class="t-micro" for="contact-brief">Project brief &amp; goals</label>
+            <textarea class="textarea-input" id="contact-brief" placeholder="Tell me about your product, design system, or performance goals...">${esc(state.contactBrief)}</textarea>
+          </div>
+        </form>
+
+        <div class="col-full passes-total-row">
+          <div>
+            <p class="t-micro">Estimated scope</p>
+            <p class="t-h2 tnum" id="tickets-total">€0 · 0 weeks</p>
+            <div id="tickets-error-wrap" aria-live="polite"></div>
+          </div>
+          <button type="button" class="btn-primary t-small" id="reserve-btn"><span>Send inquiry</span></button>
+        </div>
+
+        <div class="col-full faq-sec" id="faq">
+          <h2 class="t-h2">Frequently asked</h2>
+          <div class="faq-list">
+            ${FAQ_ITEMS.map(
+              (f) => `
+              <details class="faq-item">
+                <summary class="faq-summary t-lead">
+                  <span>${esc(f.q)}</span>
+                  <span class="faq-icon-plus">${svgPixelIcon('plus', 15)}</span>
+                  <span class="faq-icon-minus">${svgPixelIcon('minus', 15)}</span>
+                </summary>
+                <p class="faq-answer t-body">${esc(f.a)}</p>
+              </details>
+            `
+            ).join('')}
+          </div>
+        </div>
+      </div>
+
+      <dialog class="raster-dialog" id="reserve-dialog" aria-labelledby="dlg-title">
+        <h2 class="t-h2" id="dlg-title">Inquiry logged</h2>
+        <p class="t-body" id="dlg-body" style="margin-top:16px;"></p>
+        <div style="margin-top:24px;display:flex;justify-content:flex-end;">
+          <button type="button" class="btn-primary t-small" id="dlg-close"><span>Done</span></button>
+        </div>
+      </dialog>
+    </section>
+  `;
+
+  const capCtrl = buildCapacityGrid(document.getElementById('tickets-capacity-wrap')!, {
+    instant: true,
+    withSelection: true,
+  });
+  const totalEl = document.getElementById('tickets-total')!;
+  const errWrap = document.getElementById('tickets-error-wrap')!;
+  const quarterSelect = document.getElementById('quarter-select') as HTMLSelectElement;
+  const nameInput = document.getElementById('contact-name') as HTMLInputElement;
+  const emailInput = document.getElementById('contact-email') as HTMLInputElement;
+  const briefInput = document.getElementById('contact-brief') as HTMLTextAreaElement;
+  const dialog = document.getElementById('reserve-dialog') as HTMLDialogElement;
+  const dlgBody = document.getElementById('dlg-body')!;
+  const dlgClose = document.getElementById('dlg-close')!;
+
+  function syncTicketsUI() {
+    let totalCost = 0;
+    let totalWeeks = 0;
+    ENGAGEMENT_TIERS.forEach((t) => {
+      const q = state.bookingQty[t.id];
+      totalCost += q * t.price;
+      totalWeeks += t.id === 'advisory' ? Math.ceil(q / 5) : q;
+      const valEl = document.querySelector(`[data-val="${t.id}"]`)!;
+      valEl.textContent = String(q);
+
+      const decBtn = document.querySelector<HTMLButtonElement>(
+        `[data-step="-1"][data-tier="${t.id}"]`
+      )!;
+      const incBtn = document.querySelector<HTMLButtonElement>(
+        `[data-step="1"][data-tier="${t.id}"]`
+      )!;
+      decBtn.setAttribute('aria-disabled', q <= 0 ? 'true' : 'false');
+      decBtn.innerHTML = svgPixelIcon('minus', 14) + (q <= 0 ? svgStrike() : '');
+      incBtn.setAttribute('aria-disabled', q >= t.open ? 'true' : 'false');
+      incBtn.innerHTML = svgPixelIcon('plus', 14) + (q >= t.open ? svgStrike() : '');
+    });
+
+    totalEl.textContent = `€${totalCost.toLocaleString('en-US')} · ${totalWeeks} ${totalWeeks === 1 ? 'week' : 'weeks'}`;
+    capCtrl.setSelected(totalWeeks);
+    errWrap.innerHTML = state.bookingError
+      ? `<span class="error-chip t-micro" style="display:inline-block;margin-top:8px;">${esc(state.bookingError)}</span>`
+      : '';
+  }
+
+  document.getElementById('tier-list')!.addEventListener('click', (e) => {
+    const btn = (e.target as HTMLElement).closest<HTMLButtonElement>('[data-step]');
+    if (!btn || btn.getAttribute('aria-disabled') === 'true') return;
+    const tid = btn.dataset.tier as 'sprint' | 'build' | 'advisory';
+    const step = Number(btn.dataset.step);
+    const tier = ENGAGEMENT_TIERS.find((t) => t.id === tid)!;
+    state.bookingQty[tid] = Math.max(0, Math.min(tier.open, state.bookingQty[tid] + step));
+    state.bookingError = '';
+    syncTicketsUI();
+  });
+
+  quarterSelect.addEventListener('change', () => {
+    state.bookingQuarter = quarterSelect.value;
+    state.bookingError = '';
+    syncTicketsUI();
+  });
+  nameInput.addEventListener('input', () => {
+    state.contactName = nameInput.value;
+  });
+  emailInput.addEventListener('input', () => {
+    state.contactEmail = emailInput.value;
+  });
+  briefInput.addEventListener('input', () => {
+    state.contactBrief = briefInput.value;
+  });
+
+  document.getElementById('reserve-btn')!.addEventListener('click', () => {
+    const totalCount =
+      state.bookingQty.sprint + state.bookingQty.build + state.bookingQty.advisory;
+    const emailOk = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(state.contactEmail.trim());
+    if (totalCount === 0) {
+      state.bookingError = 'Select at least one sprint week or advisory day above.';
+      syncTicketsUI();
+      return;
+    }
+    if (!state.bookingQuarter) {
+      state.bookingError = 'Choose a preferred 2027 window.';
+      syncTicketsUI();
+      quarterSelect.focus();
+      return;
+    }
+    if (!state.contactName.trim() || !emailOk) {
+      state.bookingError = 'Enter your name and a valid work email.';
+      syncTicketsUI();
+      if (!state.contactName.trim()) nameInput.focus();
+      else emailInput.focus();
+      return;
+    }
+
+    const totalCost = ENGAGEMENT_TIERS.reduce(
+      (a, t) => a + state.bookingQty[t.id] * t.price,
+      0
+    );
+    const summaryParts = ENGAGEMENT_TIERS.filter((t) => state.bookingQty[t.id] > 0).map(
+      (t) => `${state.bookingQty[t.id]} × ${t.name}`
+    );
+    dlgBody.textContent = `Thank you, ${state.contactName.trim()}. Scope summary (${summaryParts.join(', ')} in ${state.bookingQuarter}, est. €${totalCost.toLocaleString('en-US')}) has been prepared for ${META.email}. Expect a response at ${state.contactEmail.trim()} within two working days.`;
+
+    if (typeof dialog.showModal === 'function') {
+      dialog.showModal();
+    } else {
+      dialog.setAttribute('open', '');
+    }
+  });
+
+  dlgClose.addEventListener('click', () => {
+    if (typeof dialog.close === 'function') dialog.close();
+    else dialog.removeAttribute('open');
+  });
+
+  syncTicketsUI();
+}
+
+// Route 8: Pixel Lab (#/playground)
+function renderPlayground(main: HTMLElement): void {
+  document.title = 'Pixel Lab' + COPY.siteTitleSuffix;
+  main.innerHTML = `
+    <section class="sub-sec" data-surface="ink">
+      <div class="grid">
+        <p class="col-1-3 t-micro">Pixel Lab</p>
+        <div class="col-5-12">
+          <h1 class="t-h1 t-paper" tabindex="-1">${esc(COPY.badgeTitle)}</h1>
+          <p class="t-body" style="margin-top:16px;">${esc(COPY.badgeLead)}</p>
+        </div>
+      </div>
+
+      <div class="grid badge-layout">
+        <div class="col-1-6">
+          <canvas class="badge-editor-canvas" id="badge-canvas" width="512" height="512" tabindex="0" role="application" aria-label="16 by 16 pixel sprite editor. Use arrow keys to move, space to paint, number keys 1 to 9 for colours."></canvas>
+          <p class="t-micro badge-status" id="badge-status" aria-live="polite"></p>
+
+          <div class="palette-group" role="radiogroup" aria-label="Colour palette" id="badge-palette">
+            ${BADGE_PALETTE.map(
+              (c, idx) => `
+              <button type="button" class="palette-swatch" role="radio" aria-checked="${idx === 0 ? 'true' : 'false'}" aria-label="Colour ${idx + 1}: ${esc(c.name)}" data-col="${esc(c.id)}" style="background:${c.hex};"></button>
+            `
+            ).join('')}
+          </div>
+
+          <div class="badge-tools">
+            <button type="button" class="chip-toggle t-micro" data-tool="paint" aria-pressed="true">Paint</button>
+            <button type="button" class="chip-toggle t-micro" data-tool="erase" aria-pressed="false">Erase</button>
+            <button type="button" class="chip-toggle t-micro" data-tool="fill" aria-pressed="false">Fill</button>
+            <button type="button" class="chip-toggle t-micro" data-tool="mirror" aria-pressed="false">Mirror</button>
+            <button type="button" class="chip-toggle t-micro" id="badge-random">Random</button>
+            <button type="button" class="chip-toggle t-micro" id="badge-clear">Clear</button>
+            <button type="button" class="chip-toggle t-micro" id="badge-undo">Undo</button>
+          </div>
+        </div>
+
+        <div class="col-8-12">
+          <svg class="badge-preview-svg" id="badge-preview" viewBox="0 0 320 480" shape-rendering="crispEdges" role="img" aria-label="Studio card preview"></svg>
+          <div class="field-group badge-name-field">
+            <label class="t-micro" for="badge-name-input">Your name (max 18 characters)</label>
+            <input class="text-input" type="text" id="badge-name-input" maxlength="18" value="${esc(state.badge.name)}">
+          </div>
+          <div class="badge-dl-wrap">
+            <button type="button" class="btn-primary t-small" id="badge-dl-btn"><span>Download card (.svg)</span></button>
+          </div>
+        </div>
+      </div>
+    </section>
+  `;
+
+  const canvas = document.getElementById('badge-canvas') as HTMLCanvasElement;
+  const statusEl = document.getElementById('badge-status')!;
+  const previewSvg = document.getElementById('badge-preview')!;
+  const nameInput = document.getElementById('badge-name-input') as HTMLInputElement;
+  const paletteBtns = Array.from(document.querySelectorAll<HTMLButtonElement>('#badge-palette .palette-swatch'));
+  const toolBtns = Array.from(document.querySelectorAll<HTMLButtonElement>('.badge-tools [data-tool]'));
+
+  let grid = state.badge.grid.split('');
+  const history: string[] = [];
+  let currentColor = '0';
+  let mode = 'paint';
+  let mirror = false;
+  let painting = false;
+  let paintModeOverride: string | null = null;
+  let keyR = 0;
+  let keyC = 0;
+  let canvasFocused = false;
+
+  function saveGrid() {
+    state.badge.grid = grid.join('');
+    storageSet('kroon.badge', state.badge);
+  }
+
+  function pushHistory() {
+    history.push(grid.join(''));
+    if (history.length > 20) history.shift();
+  }
+
+  function drawEditor() {
+    const rect = canvas.getBoundingClientRect();
+    const cssSize = Math.max(256, Math.round(rect.width));
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    canvas.width = Math.round(cssSize * dpr);
+    canvas.height = Math.round(cssSize * dpr);
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+    const cell = cssSize / 16;
+    for (let r = 0; r < 16; r++) {
+      for (let c = 0; c < 16; c++) {
+        const palId = grid[r * 16 + c];
+        const palObj = BADGE_PALETTE[Number(palId)] || BADGE_PALETTE[1];
+        ctx.fillStyle = palObj.hex;
+        ctx.fillRect(c * cell, r * cell, Math.ceil(cell), Math.ceil(cell));
+      }
+    }
+
+    ctx.strokeStyle = 'rgba(10,10,10,0.22)';
+    ctx.lineWidth = 1;
+    for (let i = 1; i < 16; i++) {
+      const p = Math.round(i * cell) + 0.5;
+      ctx.beginPath();
+      ctx.moveTo(p, 0);
+      ctx.lineTo(p, cssSize);
+      ctx.moveTo(0, p);
+      ctx.lineTo(cssSize, p);
+      ctx.stroke();
+    }
+
+    if (canvasFocused) {
+      ctx.strokeStyle = '#2E5FCE';
+      ctx.lineWidth = 2;
+      ctx.strokeRect(keyC * cell + 2, keyR * cell + 2, cell - 4, cell - 4);
+    }
+  }
+
+  function updateStatus() {
+    const palId = grid[keyR * 16 + keyC];
+    const palObj = BADGE_PALETTE[Number(palId)] || BADGE_PALETTE[1];
+    statusEl.textContent = `Row ${keyR + 1}, column ${keyC + 1}, ${palObj.name}.`;
+  }
+
+  function drawPreview() {
+    const logoLayout = layoutGlyphLines([META.brand], 2, false);
+    let logoRects = '';
+    const lCellH = 2.4;
+    const lCellW = lCellH * 1.25;
+    const lx0 = 16;
+    const ly0 = Math.round((48 - 9 * lCellH) / 2);
+    for (let i = 0; i < logoLayout.cells.length; i++) {
+      const cell = logoLayout.cells[i];
+      logoRects += `<rect x="${(lx0 + cell.x * lCellW).toFixed(2)}" y="${(ly0 + cell.y * lCellH).toFixed(2)}" width="${lCellW}" height="${lCellH}" fill="#FEFEFF"/>`;
+    }
+
+    const spriteSize = 16 * 15;
+    const sx0 = (320 - spriteSize) / 2;
+    const sy0 = 68;
+    let spriteRects = '';
+    for (let r = 0; r < 16; r++) {
+      for (let c = 0; c < 16; c++) {
+        const palId = grid[r * 16 + c];
+        const palObj = BADGE_PALETTE[Number(palId)] || BADGE_PALETTE[1];
+        spriteRects += `<rect x="${sx0 + c * 15}" y="${sy0 + r * 15}" width="15" height="15" fill="${palObj.hex}"/>`;
+      }
+    }
+
+    let stripRects = '';
+    for (let row = 0; row < 2; row++) {
+      for (let i = 0; i < 16; i++) {
+        stripRects += `<rect x="${i * 20}" y="${432 + row * 24}" width="20" height="24" fill="${TRAIL_COLORS[(i + row * 3) % TRAIL_COLORS.length]}"/>`;
+      }
+    }
+
+    const badgeName = state.badge.name || 'Visitor';
+    previewSvg.setAttribute('aria-label', `Studio card for ${badgeName}`);
+    previewSvg.innerHTML = `
+      <rect x="0" y="0" width="320" height="480" fill="#171919" stroke="#2E5FCE" stroke-width="2"/>
+      <rect x="0" y="0" width="320" height="48" fill="#2E5FCE"/>
+      ${logoRects}
+      ${spriteRects}
+      <text x="16" y="356" font-family="Inter Tight, Helvetica Neue, Helvetica, Arial, sans-serif" font-size="26" font-weight="600" fill="#FEFEFF">${esc(badgeName)}</text>
+      <text x="16" y="388" font-family="Inter Tight, Helvetica Neue, Helvetica, Arial, sans-serif" font-size="14" font-weight="500" fill="#FEFEFF">Akash Negi · Full Stack Developer</text>
+      ${stripRects}
+    `;
+  }
+
+  function paintAt(r: number, c: number, colorId: string) {
+    if (r < 0 || r >= 16 || c < 0 || c >= 16) return;
+    grid[r * 16 + c] = colorId;
+    if (mirror) grid[r * 16 + (15 - c)] = colorId;
+  }
+
+  function floodFill(r: number, c: number, newCol: string) {
+    const target = grid[r * 16 + c];
+    if (target === newCol) return;
+    const queue = [[r, c]];
+    const seen = new Set<number>();
+    while (queue.length > 0) {
+      const [cr, cc] = queue.shift()!;
+      const k = cr * 16 + cc;
+      if (cr < 0 || cr >= 16 || cc < 0 || cc >= 16 || seen.has(k) || grid[k] !== target) continue;
+      seen.add(k);
+      grid[k] = newCol;
+      queue.push([cr - 1, cc], [cr + 1, cc], [cr, cc - 1], [cr, cc + 1]);
+    }
+  }
+
+  function coordsFromEvent(e: PointerEvent) {
+    const rect = canvas.getBoundingClientRect();
+    const c = Math.min(15, Math.max(0, Math.floor(((e.clientX - rect.left) / rect.width) * 16)));
+    const r = Math.min(15, Math.max(0, Math.floor(((e.clientY - rect.top) / rect.height) * 16)));
+    return { r, c };
+  }
+
+  canvas.addEventListener('contextmenu', (e) => e.preventDefault());
+  canvas.addEventListener('pointerdown', (e) => {
+    e.preventDefault();
+    canvas.focus();
+    const { r, c } = coordsFromEvent(e);
+    keyR = r;
+    keyC = c;
+    pushHistory();
+    if (e.button === 2) {
+      painting = true;
+      paintModeOverride = '1';
+      paintAt(r, c, '1');
+    } else if (mode === 'fill') {
+      floodFill(r, c, currentColor);
+    } else {
+      painting = true;
+      paintModeOverride = mode === 'erase' ? '1' : currentColor;
+      paintAt(r, c, paintModeOverride);
+    }
+    try {
+      canvas.setPointerCapture(e.pointerId);
+    } catch {
+      // Ignore pointer capture errors
+    }
+    saveGrid();
+    drawEditor();
+    drawPreview();
+    updateStatus();
+  });
+
+  canvas.addEventListener('pointermove', (e) => {
+    if (!painting || !paintModeOverride) return;
+    const { r, c } = coordsFromEvent(e);
+    keyR = r;
+    keyC = c;
+    paintAt(r, c, paintModeOverride);
+    saveGrid();
+    drawEditor();
+    drawPreview();
+    updateStatus();
+  });
+
+  const stopPaint = () => {
+    painting = false;
+    paintModeOverride = null;
+  };
+  canvas.addEventListener('pointerup', stopPaint);
+  canvas.addEventListener('pointercancel', stopPaint);
+
+  canvas.addEventListener('focus', () => {
+    canvasFocused = true;
+    drawEditor();
+    updateStatus();
+  });
+  canvas.addEventListener('blur', () => {
+    canvasFocused = false;
+    drawEditor();
+  });
+
+  function selectColor(colId: string) {
+    currentColor = colId;
+    paletteBtns.forEach((b) =>
+      b.setAttribute('aria-checked', b.dataset.col === colId ? 'true' : 'false')
+    );
+  }
+
+  canvas.addEventListener('keydown', (e) => {
+    if (e.key === 'ArrowRight') keyC = Math.min(15, keyC + 1);
+    else if (e.key === 'ArrowLeft') keyC = Math.max(0, keyC - 1);
+    else if (e.key === 'ArrowDown') keyR = Math.min(15, keyR + 1);
+    else if (e.key === 'ArrowUp') keyR = Math.max(0, keyR - 1);
+    else if (e.key === ' ' || e.key === 'Enter') {
+      e.preventDefault();
+      pushHistory();
+      if (mode === 'fill') floodFill(keyR, keyC, currentColor);
+      else paintAt(keyR, keyC, mode === 'erase' ? '1' : currentColor);
+      saveGrid();
+      drawPreview();
+    } else if (e.key === 'Delete' || e.key === 'Backspace') {
+      e.preventDefault();
+      pushHistory();
+      paintAt(keyR, keyC, '1');
+      saveGrid();
+      drawPreview();
+    } else if (e.key >= '1' && e.key <= '9') {
+      selectColor(String(Number(e.key) - 1));
+    } else {
+      return;
+    }
+    e.preventDefault();
+    drawEditor();
+    updateStatus();
+  });
+
+  paletteBtns.forEach((btn, idx) => {
+    btn.addEventListener('click', () => selectColor(btn.dataset.col!));
+    btn.addEventListener('keydown', (e) => {
+      let next = -1;
+      if (e.key === 'ArrowRight' || e.key === 'ArrowDown') next = (idx + 1) % paletteBtns.length;
+      else if (e.key === 'ArrowLeft' || e.key === 'ArrowUp')
+        next = (idx - 1 + paletteBtns.length) % paletteBtns.length;
+      if (next >= 0) {
+        e.preventDefault();
+        selectColor(paletteBtns[next].dataset.col!);
+        paletteBtns[next].focus();
+      }
+    });
+  });
+
+  toolBtns.forEach((btn) => {
+    btn.addEventListener('click', () => {
+      const t = btn.dataset.tool!;
+      if (t === 'mirror') {
+        mirror = !mirror;
+        btn.setAttribute('aria-pressed', mirror ? 'true' : 'false');
+        return;
+      }
+      mode = t;
+      toolBtns.forEach((b) => {
+        if (b.dataset.tool !== 'mirror') {
+          b.setAttribute('aria-pressed', b.dataset.tool === mode ? 'true' : 'false');
+        }
+      });
+    });
+  });
+
+  document.getElementById('badge-random')!.addEventListener('click', () => {
+    pushHistory();
+    const rng = makeRng(Date.now());
+    const accent = String(3 + Math.floor(rng() * 6));
+    const g = new Array(256).fill('1');
+    for (let r = 2; r <= 13; r++) {
+      for (let c = 0; c < 8; c++) {
+        if (rng() < 0.42) {
+          g[r * 16 + c] = accent;
+          g[r * 16 + (15 - c)] = accent;
+        }
+      }
+    }
+    const eyeC = 3 + Math.floor(rng() * 4);
+    g[6 * 16 + eyeC] = '0';
+    g[6 * 16 + (15 - eyeC)] = '0';
+    grid = g;
+    saveGrid();
+    drawEditor();
+    drawPreview();
+    updateStatus();
+  });
+
+  document.getElementById('badge-clear')!.addEventListener('click', () => {
+    pushHistory();
+    grid = new Array(256).fill('1');
+    saveGrid();
+    drawEditor();
+    drawPreview();
+    updateStatus();
+  });
+
+  const doUndo = () => {
+    if (history.length === 0) return;
+    grid = history.pop()!.split('');
+    saveGrid();
+    drawEditor();
+    drawPreview();
+    updateStatus();
+  };
+  document.getElementById('badge-undo')!.addEventListener('click', doUndo);
+
+  const onKeyUndo = (e: KeyboardEvent) => {
+    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') {
+      e.preventDefault();
+      doUndo();
+    }
+  };
+  document.addEventListener('keydown', onKeyUndo);
+
+  nameInput.addEventListener('input', () => {
+    state.badge.name = nameInput.value.slice(0, 18);
+    storageSet('kroon.badge', state.badge);
+    drawPreview();
+  });
+
+  document.getElementById('badge-dl-btn')!.addEventListener('click', () => {
+    const ser = new XMLSerializer();
+    const clone = previewSvg.cloneNode(true) as SVGSVGElement;
+    clone.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
+    clone.setAttribute('width', '320');
+    clone.setAttribute('height', '480');
+    const svgText = `<?xml version="1.0" encoding="UTF-8"?>\n` + ser.serializeToString(clone);
+    const blob = new Blob([svgText], { type: 'image/svg+xml;charset=utf-8' });
+    const blobUrl = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = blobUrl;
+    a.download = 'akash-negi-card.svg';
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    window.setTimeout(() => URL.revokeObjectURL(blobUrl), 1000);
+  });
+
+  const ro = new ResizeObserver(drawEditor);
+  ro.observe(canvas);
+  state.routeCleanup.push(() => {
+    ro.disconnect();
+    document.removeEventListener('keydown', onKeyUndo);
+  });
+
+  drawEditor();
+  drawPreview();
+  updateStatus();
+}
+
+// 404
+function renderNotFound(main: HTMLElement): void {
+  document.title = 'Not found' + COPY.siteTitleSuffix;
+  const ch = window.innerWidth >= 768 ? 16 : 8;
+  main.innerHTML = `
+    <section class="sub-sec" data-surface="sodium">
+      <div class="grid">
+        <div class="col-full">
+          ${svgBitmapText('404', ch, TOKENS.ink, {
+            className: 'notfound-bitmap',
+            ariaHidden: true,
+            bold: true,
+          })}
+          <h1 class="t-h1" tabindex="-1">Nothing at this address.</h1>
+          <div style="margin-top:32px;">
+            <a class="btn-text t-lead u-anim" href="#/">Back to the front page</a>
+          </div>
+        </div>
+      </div>
+    </section>
+  `;
+}
+
+// Hash Router
+let currentRouteKey: string | null = null;
+
+function parseRoute(hash: string): { view: string; param?: string; key: string } {
+  const clean = (hash || '#/').replace(/^#/, '');
+  if (clean === '' || clean === '/') return { view: 'home', key: 'home' };
+  const parts = clean.split('/').filter(Boolean);
+  if (parts[0] === 'timeline' && parts.length === 1) return { view: 'timeline', key: 'timeline' };
+  if (parts[0] === 'projects' && parts.length === 1) return { view: 'projects', key: 'projects' };
+  if (parts[0] === 'projects' && parts.length === 2)
+    return { view: 'project', param: parts[1], key: 'project:' + parts[1] };
+  if (parts[0] === 'archive' && parts.length === 1) return { view: 'archive', key: 'archive' };
+  if (parts[0] === 'archive' && parts.length === 2)
+    return { view: 'archive', param: parts[1], key: 'archive:' + parts[1] };
+  if (parts[0] === 'studio' && parts.length === 1) return { view: 'studio', key: 'studio' };
+  if (parts[0] === 'contact' && parts.length === 1) return { view: 'contact', key: 'contact' };
+  if (parts[0] === 'playground' && parts.length === 1)
+    return { view: 'playground', key: 'playground' };
+  return { view: '404', key: '404' };
+}
+
+function updateActiveNav(route: { view: string }): void {
+  const mapHref: Record<string, string> = {
+    timeline: '#/timeline',
+    projects: '#/projects',
+    project: '#/projects',
+    archive: '#/archive',
+    studio: '#/studio',
+    playground: '#/playground',
+  };
+  const target = mapHref[route.view] || '';
+  document.querySelectorAll('#header-nav a, #menu-nav a').forEach((a) => {
+    if (a.getAttribute('href') === target) a.setAttribute('aria-current', 'page');
+    else a.removeAttribute('aria-current');
+  });
+}
+
+function mountRoute(route: { view: string; param?: string; key: string }, skipWipe: boolean): void {
+  const main = document.getElementById('main')!;
+  const doSwap = () => {
+    while (state.routeCleanup.length > 0) {
+      const fn = state.routeCleanup.pop()!;
+      try {
+        fn();
+      } catch {
+        // Ignore cleanup errors
+      }
+    }
+    hideTip();
+
+    if (route.view === 'home') renderHome(main);
+    else if (route.view === 'timeline') renderTimeline(main);
+    else if (route.view === 'projects') renderProjects(main);
+    else if (route.view === 'project' && route.param) renderProjectDetail(main, route.param);
+    else if (route.view === 'archive') renderArchive(main, route.param);
+    else if (route.view === 'studio') renderStudio(main);
+    else if (route.view === 'contact') renderContact(main);
+    else if (route.view === 'playground') renderPlayground(main);
+    else renderNotFound(main);
+
+    updateActiveNav(route);
+    setupObservers();
+
+    if (state.scrollAfterRoute) {
+      const target = document.getElementById(state.scrollAfterRoute);
+      state.scrollAfterRoute = null;
+      if (target) target.scrollIntoView({ behavior: state.motionOn ? 'smooth' : 'auto' });
+    } else if (!(route.view === 'archive' && route.param)) {
+      window.scrollTo(0, 0);
+    }
+
+    if (!skipWipe) {
+      const h1 = main.querySelector<HTMLElement>('h1');
+      if (h1) h1.focus({ preventScroll: true });
+    }
+  };
+
+  if (skipWipe) doSwap();
+  else playWipe(doSwap);
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+  tipEl = document.getElementById('tip')!;
+  trailCanvas = document.getElementById('trail-canvas') as HTMLCanvasElement;
+  wipeCanvas = document.getElementById('wipe-canvas') as HTMLCanvasElement;
+
+  initChrome();
+  initTrail();
+  const initial = parseRoute(window.location.hash);
+  currentRouteKey = initial.key;
+  mountRoute(initial, true);
+
+  window.addEventListener('hashchange', () => {
+    const next = parseRoute(window.location.hash);
+    if (next.key === currentRouteKey) return;
+    currentRouteKey = next.key;
+    mountRoute(next, false);
+  });
+});
